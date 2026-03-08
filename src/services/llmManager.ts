@@ -1,22 +1,42 @@
-
-import { GoogleGenAI } from "@google/genai";
-
 export interface LLMConfig {
-  provider: string;
-  model: string;
+  provider: "gemini" | "zhipu" | "tongyi" | "silra";
+  model?: string;
   apiKey?: string;
   baseUrl?: string;
 }
 
-export interface LLMResponse {
-  text: string;
-}
-
 abstract class LLMProvider {
   protected config: LLMConfig;
+  protected static readonly TIMEOUT_MS = 90_000;
 
   constructor(config: LLMConfig) {
     this.config = config;
+  }
+
+  protected maskKey(key?: string): string {
+    if (!key) return "missing";
+    if (key.length < 10) return `${key.slice(0, 2)}***${key.slice(-2)}`;
+    return `${key.slice(0, 4)}***${key.slice(-4)}`;
+  }
+
+  protected ensureImageDataUrl(imageBase64?: string, mime = "image/jpeg"): string | undefined {
+    if (!imageBase64) return undefined;
+    if (imageBase64.startsWith("data:image/")) return imageBase64;
+    return `data:${mime};base64,${imageBase64}`;
+  }
+
+  protected normalizeBaseUrl(raw: string): string {
+    return raw.replace(/\/+$/, "");
+  }
+
+  protected async fetchWithTimeout(input: string, init: RequestInit): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), LLMProvider.TIMEOUT_MS);
+    try {
+      return await fetch(input, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   abstract generate(prompt: string, systemInstruction?: string, imageBase64?: string): Promise<string>;
@@ -27,176 +47,214 @@ class GeminiProvider extends LLMProvider {
     const apiKey = this.config.apiKey;
     if (!apiKey) throw new Error("Gemini API Key is missing");
 
-    // Handle custom Base URL if provided (using fetch for custom endpoints, or SDK for standard)
-    if (this.config.baseUrl) {
-      const url = `${this.config.baseUrl}/v1beta/models/${this.config.model}:generateContent?key=${apiKey}`;
-      const contents: any = imageBase64 ? {
-        parts: [
-          { inlineData: { data: imageBase64.split(',')[1], mimeType: "image/jpeg" } },
-          { text: prompt }
-        ]
-      } : { parts: [{ text: prompt }] };
+    const model = this.config.model || "gemini-2.5-flash";
+    const baseUrl = this.normalizeBaseUrl(this.config.baseUrl || "https://generativelanguage.googleapis.com/v1beta");
+    const endpoint = `${baseUrl}/models/${model}:generateContent?key=${apiKey}`;
 
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [contents],
-          systemInstruction: systemInstruction ? { parts: [{ text: systemInstruction }] } : undefined,
-          generationConfig: { responseMimeType: "application/json" }
-        })
+    console.log(
+      `[LLM][gemini] model=${model} baseUrl=${baseUrl} key=${this.maskKey(apiKey)} timeoutMs=${LLMProvider.TIMEOUT_MS}`
+    );
+
+    const imageData = this.ensureImageDataUrl(imageBase64, "image/jpeg");
+    const parts: Array<Record<string, unknown>> = [{ text: prompt }];
+    if (imageData) {
+      parts.unshift({
+        inlineData: {
+          mimeType: imageData.substring(5, imageData.indexOf(";")) || "image/jpeg",
+          data: imageData.split(",")[1] || "",
+        },
       });
-      
-      if (!response.ok) {
-        const err = await response.text();
-        throw new Error(`Gemini API Error: ${err}`);
-      }
-      
-      const data = await response.json();
-      if (data.error) throw new Error(data.error.message);
-      return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    } else {
-      // Use Official SDK
-      const ai = new GoogleGenAI({ apiKey: apiKey });
-      const contents: any = imageBase64 ? {
-        parts: [
-          { inlineData: { data: imageBase64.split(',')[1], mimeType: "image/jpeg" } },
-          { text: prompt }
-        ]
-      } : prompt;
+    }
 
-      const response = await ai.models.generateContent({
-        model: this.config.model,
-        contents: contents,
-        config: {
-          systemInstruction: systemInstruction,
-          responseMimeType: "application/json",
+    const response = await this.fetchWithTimeout(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts }],
+        systemInstruction: systemInstruction ? { parts: [{ text: systemInstruction }] } : undefined,
+        generationConfig: { responseMimeType: "application/json" },
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.text();
+      const proxyHint = process.env.HTTPS_PROXY
+        ? "HTTPS_PROXY is set."
+        : "HTTPS_PROXY is not set. If you are in restricted network, check HTTPS_PROXY.";
+      throw new Error(`Gemini API Error(${response.status}): ${err}. ${proxyHint}`);
+    }
+
+    const data = (await response.json()) as any;
+    if (data.error?.message) throw new Error(data.error.message);
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  }
+}
+
+class OpenAICompatibleProvider extends LLMProvider {
+  private readonly providerName: "zhipu" | "tongyi" | "silra";
+
+  constructor(config: LLMConfig, providerName: "zhipu" | "tongyi" | "silra") {
+    super(config);
+    this.providerName = providerName;
+  }
+
+  private isVisionCapableModel(model?: string): boolean {
+    if (!model) return false;
+    const lowered = model.toLowerCase();
+    return (
+      lowered.includes("vl") ||
+      lowered.includes("4.5v") ||
+      lowered.includes("4v") ||
+      lowered.includes("vision") ||
+      lowered.includes("image") ||
+      lowered.includes("gemini-3.1-pro-preview")
+    );
+  }
+
+  private resolveModel(isVision: boolean): string {
+    if (this.providerName === "silra") {
+      if (isVision) {
+        if (!this.isVisionCapableModel(this.config.model)) {
+          return process.env.SILRA_VISION_MODEL || "qwen-vl-plus";
         }
-      });
-      return response.text || "";
+        return this.config.model || process.env.SILRA_VISION_MODEL || "qwen-vl-plus";
+      }
+      return this.config.model || process.env.SILRA_TEXT_MODEL || "deepseek-v3";
     }
+    if (this.providerName === "zhipu") {
+      return isVision
+        ? this.config.model || process.env.ZHIPU_VISION_MODEL || "glm-4.5v"
+        : this.config.model || process.env.ZHIPU_TEXT_MODEL || "glm-4";
+    }
+    if (isVision) {
+      return this.config.model || process.env.TONGYI_VISION_MODEL || "qwen-vl-plus";
+    }
+    return this.config.model || process.env.TONGYI_TEXT_MODEL || "qwen-mt-plus";
   }
-}
 
-class ZhipuProvider extends LLMProvider {
+  private resolveEndpoint(baseUrl: string): string {
+    if (baseUrl.endsWith("/chat/completions")) return baseUrl;
+    if (this.providerName === "silra") {
+      if (baseUrl.endsWith("/v1")) return `${baseUrl}/chat/completions`;
+      return `${baseUrl}/v1/chat/completions`;
+    }
+    return `${baseUrl}/chat/completions`;
+  }
+
+  private parseContent(content: unknown): string {
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      return content
+        .map((item) => {
+          const text = (item as { text?: unknown }).text;
+          return typeof text === "string" ? text : "";
+        })
+        .join("")
+        .trim();
+    }
+    return "";
+  }
+
   async generate(prompt: string, systemInstruction?: string, imageBase64?: string): Promise<string> {
     const apiKey = this.config.apiKey;
-    if (!apiKey) throw new Error("Zhipu API Key is missing");
+    if (!apiKey) throw new Error(`${this.providerName} API Key is missing`);
 
-    const baseUrl = this.config.baseUrl || "https://open.bigmodel.cn/api/paas/v4/chat/completions";
+    const baseUrl = this.normalizeBaseUrl(
+      this.config.baseUrl ||
+        (this.providerName === "silra"
+          ? "https://api.silra.cn/v1"
+          :
+        (this.providerName === "zhipu"
+          ? "https://open.bigmodel.cn/api/paas/v4"
+          : "https://dashscope.aliyuncs.com/compatible-mode/v1"))
+    );
+    const endpoint = this.resolveEndpoint(baseUrl);
+    const imageData = this.ensureImageDataUrl(imageBase64, "image/jpeg");
+    const model = this.resolveModel(Boolean(imageData));
 
-    const messages: any[] = [];
-    if (systemInstruction) messages.push({ role: "system", content: systemInstruction });
+    console.log(
+      `[LLM][${this.providerName}] model=${model} baseUrl=${baseUrl} endpoint=${endpoint} key=${this.maskKey(apiKey)} timeoutMs=${LLMProvider.TIMEOUT_MS}`
+    );
 
-    const userContent: any[] = [{ type: "text", text: prompt }];
-    if (imageBase64) {
-      userContent.push({ type: "image_url", image_url: { url: imageBase64 } });
+    const userContent: Array<Record<string, unknown>> = [{ type: "text", text: prompt }];
+    if (imageData) {
+      userContent.push({ type: "image_url", image_url: { url: imageData } });
+    }
+
+    const messages: Array<Record<string, unknown>> = [];
+    if (systemInstruction) {
+      messages.push({ role: "system", content: systemInstruction });
     }
     messages.push({ role: "user", content: userContent });
 
-    const response = await fetch(baseUrl, {
+    const response = await this.fetchWithTimeout(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: this.config.model,
-        messages: messages,
-        // Zhipu specific: response_format for JSON if needed, but usually text is fine.
-        // For structured output, we might need to parse the text.
-        // The prompt usually asks for JSON, so the model should output JSON string.
-      })
+        model,
+        messages,
+        temperature: 0.2,
+      }),
     });
 
     if (!response.ok) {
-        const err = await response.text();
-        throw new Error(`Zhipu API Error: ${err}`);
+      const err = await response.text();
+      throw new Error(`${this.providerName} API Error(${response.status}): ${err}`);
     }
 
-    const data = await response.json();
-    return data.choices[0].message.content;
-  }
-}
-
-class TongyiProvider extends LLMProvider {
-  async generate(prompt: string, systemInstruction?: string, imageBase64?: string): Promise<string> {
-    const apiKey = this.config.apiKey;
-    if (!apiKey) throw new Error("Tongyi API Key is missing");
-
-    const baseUrl = this.config.baseUrl || "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation";
-    // Note: Tongyi VL models might have different endpoints or payload structures compared to text models.
-    // Assuming the standard Qwen-VL endpoint compatibility or similar structure.
-    // For Qwen-VL, the input structure is specific.
-
-    const messages: any[] = [];
-    if (systemInstruction) messages.push({ role: "system", content: systemInstruction });
-
-    const userContent: any[] = [{ text: prompt }];
-    if (imageBase64) {
-      // Tongyi expects 'image' field with URL or base64? 
-      // DashScope usually expects a public URL or oss path for images in some versions, 
-      // but recent updates support base64 data URIs in some contexts or require specific handling.
-      // For simplicity, we assume it supports data URI or we might need to upload.
-      // Actually, DashScope VL often requires a URL. If Base64 is not supported directly in 'image' field, 
-      // this might fail. However, let's try the standard message format.
-      userContent.push({ image: imageBase64 });
-    }
-    messages.push({ role: "user", content: userContent });
-
-    const isVL = this.config.model.includes('vl');
-    const url = isVL 
-        ? "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
-        : baseUrl;
-
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: this.config.model,
-        input: { messages: messages },
-        parameters: { result_format: "message" }
-      })
-    });
-
-    if (!response.ok) {
-        const err = await response.text();
-        throw new Error(`Tongyi API Error: ${err}`);
-    }
-
-    const data = await response.json();
-    if (data.code) { // DashScope returns code in body on error sometimes
-        throw new Error(`Tongyi API Error: ${data.message}`);
-    }
-    return data.output.choices[0].message.content;
+    const data = (await response.json()) as any;
+    return this.parseContent(data?.choices?.[0]?.message?.content);
   }
 }
 
 export class LLMManager {
   static createProvider(config: LLMConfig): LLMProvider {
     switch (config.provider) {
-      case 'gemini':
+      case "gemini":
         return new GeminiProvider(config);
-      case 'zhipu':
-        return new ZhipuProvider(config);
-      case 'tongyi':
-        return new TongyiProvider(config);
+      case "zhipu":
+        return new OpenAICompatibleProvider(config, "zhipu");
+      case "tongyi":
+        return new OpenAICompatibleProvider(config, "tongyi");
+      case "silra":
+        return new OpenAICompatibleProvider(config, "silra");
       default:
-        throw new Error(`Unsupported provider: ${config.provider}`);
+        throw new Error(`Unsupported provider: ${(config as { provider?: string }).provider}`);
     }
   }
 
   static getAvailableModels(provider: string): string[] {
+    return this.getAvailableTextModels(provider);
+  }
+
+  static getAvailableTextModels(provider: string): string[] {
     switch (provider) {
-      case 'gemini':
-        return ['gemini-3-flash-preview', 'gemini-2.5-flash-image', 'gemini-3.1-pro-preview'];
-      case 'zhipu':
-        return ['glm-4', 'glm-4v', 'glm-4-flash'];
-      case 'tongyi':
-        return ['qwen-turbo', 'qwen-plus', 'qwen-max', 'qwen-vl-max', 'qwen-vl-plus'];
+      case "gemini":
+        return ["gemini-2.5-flash", "gemini-2.5-pro"];
+      case "zhipu":
+        return ["glm-4"];
+      case "tongyi":
+        return ["qwen-mt-plus", "qwen-max"];
+      case "silra":
+        return ["deepseek-v3", "deepseek-chat"];
+      default:
+        return [];
+    }
+  }
+
+  static getAvailableVisionModels(provider: string): string[] {
+    switch (provider) {
+      case "gemini":
+        return ["gemini-2.5-pro"];
+      case "zhipu":
+        return ["glm-4.5v"];
+      case "tongyi":
+        return ["qwen-vl-plus"];
+      case "silra":
+        return ["qwen-vl-plus", "glm-4.5v", "gemini-3.1-pro-preview"];
       default:
         return [];
     }

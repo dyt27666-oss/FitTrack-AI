@@ -1,24 +1,32 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import { 
   Activity, 
+  Book,
+  Bike,
+  Brain,
+  Check,
+  Code,
+  Coffee,
+  CupSoda,
+  Droplets,
+  Flame,
+  Heart,
+  Moon,
+  Smile,
+  Sun,
   Utensils, 
   User, 
   Plus, 
+  Pencil,
   Trash2, 
   ChevronLeft, 
   ChevronRight, 
   Sparkles,
   Scale,
   Target,
-  Flame,
   Camera,
-  Search,
-  Info,
   ChevronDown,
-  ChevronUp,
-  Brain,
-  PieChart as PieChartIcon,
-  BarChart as BarChartIcon
+  MoonStar,
 } from 'lucide-react';
 import { 
   PieChart, 
@@ -34,12 +42,20 @@ import {
   CartesianGrid
 } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
-import { Profile, Log, Food, CustomUnit } from './types';
-import { estimateCalories, analyzeFoodImage, generateDailyAdvice } from './services/geminiService';
+import { Profile, Log, Food, CustomUnit, AIHealthCheckSummary } from './types';
+import type { BodyMetric, BalancedDietAnalysisReport, Habit, HabitHeatmapCell, HabitHistorySeries, HabitTodayItem } from './types';
+import { analyzeFoodImage, archiveHabit, checkInHabit, createHabit, estimateCalories, fetchHabitHeatmap, fetchHabitHistory, fetchHabits, fetchTodayHabits, generateDailyAdvice, healthCheckEngines, searchFoods, updateHabit } from './services/aiClient';
 import { LLMManager } from './services/llmManager';
+import { calculateNutritionFromWeight, resolveGramsPerUnit } from './utils/nutritionCalculator';
+import { LogForm } from './components/LogForm';
+import { FoodSearchSelect } from './components/FoodSearchSelect';
+import { FastingPage, type FastingStatusView } from './components/FastingPage';
+import { BodyMetricsPage } from './components/BodyMetricsPage';
+import { SelfDisciplinePage } from './pages/SelfDisciplinePage';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'logs' | 'profile'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'logs' | 'fasting' | 'bodyMetrics' | 'profile'>('dashboard');
+  const [routePath, setRoutePath] = useState<string>(window.location.hash || '#/');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [editProfile, setEditProfile] = useState<Partial<Profile>>({});
@@ -56,7 +72,28 @@ export default function App() {
   const [itemAmount, setItemAmount] = useState('');
   const [exerciseType, setExerciseType] = useState('跑步');
   const [estimatedCalories, setEstimatedCalories] = useState<number | null>(null);
+  const [estimatedMacros, setEstimatedMacros] = useState<{ protein: number; carbs: number; fats: number } | null>(null);
+  const [estimatedWeight, setEstimatedWeight] = useState<number | null>(null);
+  const [confidenceHint, setConfidenceHint] = useState<string | null>(null);
+  const [analysisReport, setAnalysisReport] = useState<BalancedDietAnalysisReport | null>(null);
+  const [healthScore, setHealthScore] = useState<number | null>(null);
+  const [alertLevel, setAlertLevel] = useState<'green' | 'yellow' | 'red' | null>(null);
   const [isEstimating, setIsEstimating] = useState(false);
+  const [isImageAnalyzing, setIsImageAnalyzing] = useState(false);
+  const [healthStatus, setHealthStatus] = useState<AIHealthCheckSummary | null>(null);
+  const [isCheckingHealth, setIsCheckingHealth] = useState(false);
+  const [fastingStatus, setFastingStatus] = useState<FastingStatusView | null>(null);
+  const [selectedFastingPlan, setSelectedFastingPlan] = useState('16-8');
+  const [isSubmittingFasting, setIsSubmittingFasting] = useState(false);
+  const [bodyMetrics, setBodyMetrics] = useState<BodyMetric[]>([]);
+  const [isSavingBodyMetric, setIsSavingBodyMetric] = useState(false);
+  const [isDeletingBodyMetric, setIsDeletingBodyMetric] = useState(false);
+  const [todayHabits, setTodayHabits] = useState<HabitTodayItem[]>([]);
+  const [habitHeatmap, setHabitHeatmap] = useState<HabitHeatmapCell[]>([]);
+  const [habitSummaryDate, setHabitSummaryDate] = useState(new Date().toISOString().slice(0, 10));
+  const [isSyncingHabits, setIsSyncingHabits] = useState(false);
+  const [habitCatalog, setHabitCatalog] = useState<Habit[]>([]);
+  const [habitHistory, setHabitHistory] = useState<Record<number, HabitHistorySeries>>({});
 
   const EXERCISE_METS: Record<string, number> = {
     '跑步': 7.0,
@@ -77,10 +114,6 @@ export default function App() {
     // Standard simplified: Calories = MET * Weight * (Duration/60)
     return Math.round(met * weight * (duration / 60));
   };
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<Food[]>([]);
-  const [showCustomFood, setShowCustomFood] = useState(false);
-
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [customUnits, setCustomUnits] = useState<CustomUnit[]>([]);
@@ -88,25 +121,58 @@ export default function App() {
   const [showUnitModal, setShowUnitModal] = useState(false);
   const [selectedUnit, setSelectedUnit] = useState<string>('g'); // 'g' or unit id
   const [selectedFoodId, setSelectedFoodId] = useState<number | null>(null);
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [selectedFood, setSelectedFood] = useState<Food | null>(null);
+  const [unitTargetFood, setUnitTargetFood] = useState<Food | null>(null);
+  const [editingLog, setEditingLog] = useState<Log | null>(null);
+  const [availableTextModels, setAvailableTextModels] = useState<string[]>([]);
+  const [availableVisionModels, setAvailableVisionModels] = useState<string[]>([]);
 
   useEffect(() => {
-    if (editProfile.ai_provider) {
-      setAvailableModels(LLMManager.getAvailableModels(editProfile.ai_provider));
+    if (editProfile.text_ai_provider) {
+      setAvailableTextModels(LLMManager.getAvailableTextModels(editProfile.text_ai_provider));
     }
-  }, [editProfile.ai_provider]);
+  }, [editProfile.text_ai_provider]);
+
+  useEffect(() => {
+    if (editProfile.vision_ai_provider) {
+      setAvailableVisionModels(LLMManager.getAvailableVisionModels(editProfile.vision_ai_provider));
+    }
+  }, [editProfile.vision_ai_provider]);
+
+  useEffect(() => {
+    const onHashChange = () => setRoutePath(window.location.hash || '#/');
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
 
   useEffect(() => {
     fetchProfile();
     fetchLogs();
+    fetchBodyMetrics();
+    fetchDisciplineData();
     // fetchUnits(); // Don't fetch all units globally anymore, fetch per food
   }, [selectedDate]);
 
+  useEffect(() => {
+    fetchFastingStatus();
+  }, []);
+
+  useEffect(() => {
+    if (!fastingStatus?.active) return;
+    const timer = window.setInterval(() => {
+      fetchFastingStatus();
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [fastingStatus?.active]);
+
   const fetchUnits = async (foodId?: number) => {
-    const url = foodId ? `/api/units?food_id=${foodId}` : '/api/units';
-    const res = await fetch(url);
+    if (!foodId) {
+      setCustomUnits([]);
+      return;
+    }
+    const res = await fetch(`/api/units?food_id=${foodId}`);
     const data = await res.json();
-    setCustomUnits(data);
+    setCustomUnits(Array.isArray(data) ? data : []);
   };
 
   const fetchProfile = async () => {
@@ -124,25 +190,317 @@ export default function App() {
     setLoading(false);
   };
 
-  const handleSearchFood = async (q: string) => {
-    setSearchQuery(q);
-    if (q.length < 1) {
-      setSearchResults([]);
-      return;
-    }
-    const res = await fetch(`/api/foods/search?q=${encodeURIComponent(q)}`);
+  const fetchFastingStatus = async () => {
+    const res = await fetch('/api/fasting/current');
     const data = await res.json();
-    setSearchResults(data);
+    setFastingStatus(data);
+  };
+
+  const fetchBodyMetrics = async () => {
+    const res = await fetch('/api/body-metrics');
+    const data = await res.json();
+    setBodyMetrics(Array.isArray(data) ? data : []);
+  };
+
+  const fetchDisciplineData = async () => {
+    try {
+      const [today, heatmap, habits] = await Promise.all([fetchTodayHabits(), fetchHabitHeatmap(90), fetchHabits()]);
+      setTodayHabits(Array.isArray(today.habits) ? today.habits : []);
+      setHabitSummaryDate(today.date);
+      setHabitHeatmap(Array.isArray(heatmap) ? heatmap : []);
+      setHabitCatalog(Array.isArray(habits) ? habits : []);
+    } catch (error) {
+      console.error('Failed to fetch discipline data', error);
+    }
+  };
+
+  const handleHabitCheckIn = async (habitId: number, status: 'done' | 'missed') => {
+    setIsSyncingHabits(true);
+    try {
+      await checkInHabit(habitId, status);
+      await fetchDisciplineData();
+      setToast({ message: status === 'done' ? '习惯已打卡' : '已标记为未完成', type: 'success' });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : '更新自律任务失败', type: 'error' });
+    } finally {
+      setIsSyncingHabits(false);
+      setTimeout(() => setToast(null), 3000);
+    }
+  };
+
+  const handleCreateHabit = async (payload: {
+    name: string;
+    icon?: string;
+    color?: string;
+    frequencyType?: 'daily' | 'weekly';
+    frequencyValue?: number;
+    targetValue?: number;
+    unit?: string;
+  }) => {
+    setIsSyncingHabits(true);
+    try {
+      await createHabit(payload);
+      await fetchDisciplineData();
+      setToast({ message: '自律目标已创建', type: 'success' });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : '创建目标失败', type: 'error' });
+    } finally {
+      setIsSyncingHabits(false);
+      setTimeout(() => setToast(null), 3000);
+    }
+  };
+
+  const handleUpdateHabit = async (habitId: number, payload: {
+    name: string;
+    icon?: string;
+    color?: string;
+    frequencyType?: 'daily' | 'weekly';
+    frequencyValue?: number;
+    targetValue?: number;
+    unit?: string;
+  }) => {
+    setIsSyncingHabits(true);
+    try {
+      await updateHabit(habitId, payload);
+      await fetchDisciplineData();
+      setToast({ message: '自律目标已更新', type: 'success' });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : '更新目标失败', type: 'error' });
+    } finally {
+      setIsSyncingHabits(false);
+      setTimeout(() => setToast(null), 3000);
+    }
+  };
+
+  const handleArchiveHabit = async (habitId: number) => {
+    setIsSyncingHabits(true);
+    try {
+      await archiveHabit(habitId);
+      await fetchDisciplineData();
+      setToast({ message: '目标已归档', type: 'success' });
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : '归档目标失败', type: 'error' });
+    } finally {
+      setIsSyncingHabits(false);
+      setTimeout(() => setToast(null), 3000);
+    }
+  };
+
+  const handleLoadHabitHistory = async (habitId: number) => {
+    if (habitHistory[habitId]) return;
+    try {
+      const series = await fetchHabitHistory(habitId, 30);
+      setHabitHistory((current) => ({ ...current, [habitId]: series }));
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : '加载趋势失败', type: 'error' });
+      setTimeout(() => setToast(null), 3000);
+    }
+  };
+
+  const handleStartFasting = async () => {
+    setIsSubmittingFasting(true);
+    try {
+      const res = await fetch('/api/fasting/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan_type: selectedFastingPlan }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setFastingStatus(data);
+        setToast({ message: `断食已开始：${selectedFastingPlan}`, type: 'success' });
+      } else {
+        setToast({ message: data.error || '开始断食失败', type: 'error' });
+      }
+    } finally {
+      setIsSubmittingFasting(false);
+      setTimeout(() => setToast(null), 3000);
+    }
+  };
+
+  const handleEndFasting = async () => {
+    setIsSubmittingFasting(true);
+    try {
+      const res = await fetch('/api/fasting/end', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        await fetchFastingStatus();
+        setToast({ message: data.status === 'completed' ? '断食已完成' : '断食已提前结束', type: 'success' });
+      } else {
+        setToast({ message: data.error || '结束断食失败', type: 'error' });
+      }
+    } finally {
+      setIsSubmittingFasting(false);
+      setTimeout(() => setToast(null), 3000);
+    }
+  };
+
+  const handleCreateBodyMetric = async (payload: {
+    date: string;
+    weight?: number | null;
+    chest?: number | null;
+    waist?: number | null;
+    thigh?: number | null;
+    photo_url?: string | null;
+  }) => {
+    setIsSavingBodyMetric(true);
+    try {
+      const res = await fetch('/api/body-metrics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        await fetchBodyMetrics();
+        setToast({ message: '身体档案已保存', type: 'success' });
+      } else {
+        setToast({ message: data.error || '保存身体档案失败', type: 'error' });
+      }
+    } finally {
+      setIsSavingBodyMetric(false);
+      setTimeout(() => setToast(null), 3000);
+    }
+  };
+
+  const handleDeleteBodyMetric = async (id: number) => {
+    setIsDeletingBodyMetric(true);
+    try {
+      const res = await fetch(`/api/body-metrics/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (res.ok) {
+        await fetchBodyMetrics();
+        setToast({ message: '身体档案已删除', type: 'success' });
+      } else {
+        setToast({ message: data.error || '删除身体档案失败', type: 'error' });
+      }
+    } finally {
+      setIsDeletingBodyMetric(false);
+      setTimeout(() => setToast(null), 3000);
+    }
+  };
+
+  const fetchFoodById = async (foodId: number): Promise<Food | null> => {
+    const res = await fetch(`/api/foods/${foodId}`);
+    if (!res.ok) return null;
+    return (await res.json()) as Food;
+  };
+
+  const selectFoodForLog = async (food: Food) => {
+    setItemName(food.name);
+    setSelectedFood(food);
+    setSelectedFoodId(food.id);
+    setUnitTargetFood(food);
+    setSelectedUnit('g');
+    setEstimatedCalories(null);
+    setEstimatedMacros(null);
+    setEstimatedWeight(null);
+    setConfidenceHint(null);
+    setAnalysisReport(null);
+    setHealthScore(null);
+    setAlertLevel(null);
+    await fetchUnits(food.id);
+    if (!itemAmount) {
+      setItemAmount('100');
+    }
+  };
+
+  const openCreateLogModal = (type: 'food' | 'exercise') => {
+    closeAddModal();
+    setIsAdding(type);
+  };
+
+  const handleSelectUnitTargetFood = async (food: Food) => {
+    setUnitTargetFood(food);
+    await fetchUnits(food.id);
+  };
+
+  const handleEditLog = async (log: Log) => {
+    closeAddModal();
+    setEditingLog(log);
+    setIsAdding(log.type);
+    setItemName(log.name.replace(/\s*\([^)]*\)\s*$/, ''));
+    setItemAmount(String(log.amount || ''));
+    setEstimatedCalories(log.calories);
+    setEstimatedMacros({
+      protein: log.protein || 0,
+      carbs: log.carbs || 0,
+      fats: log.fats || 0,
+    });
+    setEstimatedWeight(log.grams || null);
+    setConfidenceHint(log.type === 'food' ? '编辑模式：修改数量或单位后会重新计算热量与 P/C/F' : null);
+    setAnalysisReport(null);
+    setHealthScore(null);
+    setAlertLevel(null);
+
+    if (log.type === 'food' && log.food_id) {
+      const food = await fetchFoodById(log.food_id);
+      if (food) {
+        setSelectedFood(food);
+        setSelectedFoodId(food.id);
+        await fetchUnits(food.id);
+      }
+      if (log.unit_name) {
+        if (log.unit_name === 'g') {
+          setSelectedUnit('g');
+        } else {
+          const units = await fetch(`/api/units?food_id=${log.food_id}`).then((res) => res.json()) as CustomUnit[];
+          setCustomUnits(Array.isArray(units) ? units : []);
+          const matchedUnit = units.find((unit) => unit.name === log.unit_name);
+          setSelectedUnit(matchedUnit ? String(matchedUnit.id) : 'g');
+        }
+      }
+    }
+  };
+
+  const handleAddCustomFood = async (payload: {
+    name: string;
+    calories: number;
+    protein: number;
+    carbs: number;
+    fats: number;
+  }) => {
+    const res = await fetch('/api/foods', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    const createdFood = data?.id ? await fetchFoodById(Number(data.id)) : null;
+    if (createdFood) {
+      await selectFoodForLog(createdFood);
+    } else {
+      setItemName(payload.name);
+      setEstimatedCalories(payload.calories);
+      setEstimatedMacros({
+        protein: payload.protein,
+        carbs: payload.carbs,
+        fats: payload.fats,
+      });
+    }
   };
 
   const closeAddModal = () => {
     setIsAdding(null);
+    setEditingLog(null);
     setItemName('');
     setItemAmount('');
     setEstimatedCalories(null);
-    setSearchQuery('');
-    setSearchResults([]);
-    setShowCustomFood(false);
+    setEstimatedMacros(null);
+    setEstimatedWeight(null);
+    setConfidenceHint(null);
+    setAnalysisReport(null);
+    setHealthScore(null);
+    setAlertLevel(null);
+    setIsImageAnalyzing(false);
+    setSelectedUnit('g');
+    setSelectedFoodId(null);
+    setSelectedFood(null);
+    setUnitTargetFood(null);
+    setCustomUnits([]);
   };
 
   const handleAddLog = async (type: 'food' | 'exercise', manualData?: any) => {
@@ -165,9 +523,9 @@ export default function App() {
             name: name,
             amount: parseFloat(itemAmount),
             calories: estimatedCalories || estimation.calories,
-            protein: estimation.protein || 0,
-            carbs: estimation.carbs || 0,
-            fats: estimation.fats || 0
+            protein: estimatedMacros?.protein ?? estimation.protein ?? 0,
+            carbs: estimatedMacros?.carbs ?? estimation.carbs ?? 0,
+            fats: estimatedMacros?.fats ?? estimation.fats ?? 0
           };
         }
       }
@@ -201,18 +559,176 @@ export default function App() {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    closeAddModal();
+    setIsAdding('food');
     setIsEstimating(true);
+    setIsImageAnalyzing(true);
     const reader = new FileReader();
     reader.onloadend = async () => {
       const base64 = reader.result as string;
-      const analysis = await analyzeFoodImage(profile, base64);
-      if (analysis) {
-        setItemName(analysis.name || '');
-        setItemAmount(analysis.weight?.toString() || '');
-        setEstimatedCalories(analysis.calories);
-        setIsAdding('food');
+      try {
+        const analysis = await analyzeFoodImage(profile, base64);
+        if (analysis) {
+        const applyEstimate = (payload: {
+          name: string;
+          weight: number;
+          calories: number;
+          protein: number;
+          carbs: number;
+          fats: number;
+          hint: string;
+        }) => {
+          setItemName(payload.name);
+          setItemAmount(String(payload.weight || 100));
+          setEstimatedWeight(payload.weight || 100);
+          setEstimatedCalories(payload.calories || 0);
+          setEstimatedMacros({
+            protein: payload.protein || 0,
+            carbs: payload.carbs || 0,
+            fats: payload.fats || 0,
+          });
+          setConfidenceHint(payload.hint);
+          setAnalysisReport(analysis.analysis_report || null);
+          setHealthScore(analysis.health_score ?? null);
+          setAlertLevel(
+            analysis.alert_level ??
+              (typeof analysis.health_score === 'number'
+                ? analysis.health_score >= 80
+                  ? 'green'
+                  : analysis.health_score >= 60
+                    ? 'yellow'
+                    : 'red'
+                : null)
+          );
+          setSelectedUnit('g');
+          setIsAdding('food');
+          setIsImageAnalyzing(false);
+        };
+
+        const fallbackHint = analysis.explanation || '由于图片模糊或网络超时，此为系统默认估算值，请手动微调。';
+
+        if (analysis.is_edible === false) {
+          setToast({ message: '识别到不可食用对象，请手动录入', type: 'error' });
+          setTimeout(() => setToast(null), 3000);
+          setIsImageAnalyzing(false);
+          setIsEstimating(false);
+          return;
+        }
+
+        const confidence = analysis.confidence || 0;
+        const matchedFoods = analysis.name ? ((await searchFoods(analysis.name, false)) as unknown as Food[]) : [];
+        const matchedFood = matchedFoods[0] || null;
+
+        if (matchedFood) {
+          setSelectedFood(matchedFood);
+          setSelectedFoodId(matchedFood.id);
+          await fetchUnits(matchedFood.id);
+        } else {
+          setSelectedFood(null);
+          setSelectedFoodId(null);
+          setCustomUnits([]);
+        }
+
+        if (confidence > 80) {
+          applyEstimate({
+            name: matchedFood?.name || analysis.name || '',
+            weight: analysis.weight || 100,
+            calories: matchedFood
+              ? Math.round((((matchedFood.calories_per_100g ?? matchedFood.calories) * (analysis.weight || 100)) / 100) * 10) / 10
+              : analysis.calories || 0,
+            protein: matchedFood
+              ? Math.round((((matchedFood.protein_per_100g ?? matchedFood.protein) * (analysis.weight || 100)) / 100) * 10) / 10
+              : analysis.protein || 0,
+            carbs: matchedFood
+              ? Math.round((((matchedFood.carbs_per_100g ?? matchedFood.carbs) * (analysis.weight || 100)) / 100) * 10) / 10
+              : analysis.carbs || 0,
+            fats: matchedFood
+              ? Math.round((((matchedFood.fats_per_100g ?? matchedFood.fats) * (analysis.weight || 100)) / 100) * 10) / 10
+              : analysis.fats || 0,
+            hint: analysis.explanation || 'AI 高置信度预估',
+          });
+        } else if (confidence > 40) {
+          const candidates = analysis.candidates || [];
+          if (candidates.length >= 2) {
+            const c1 = candidates[0];
+            const c2 = candidates[1];
+            const chooseFirst = window.confirm(`这可能是“${c1.name}”（确定）或“${c2.name}”（取消）`);
+            const picked = chooseFirst ? c1 : c2;
+            const fallbackWeight = picked.estimated_weight_g || analysis.weight || 100;
+            applyEstimate({
+              name: matchedFood?.name || picked.name || analysis.name || '',
+              weight: fallbackWeight,
+              calories: matchedFood
+                ? Math.round((((matchedFood.calories_per_100g ?? matchedFood.calories) * fallbackWeight) / 100) * 10) / 10
+                : picked.estimated_calories ||
+                  analysis.calories ||
+                  Math.round(((picked.calories_per_100g || 0) * fallbackWeight) / 100),
+              protein: matchedFood
+                ? Math.round((((matchedFood.protein_per_100g ?? matchedFood.protein) * fallbackWeight) / 100) * 10) / 10
+                : analysis.protein ||
+                  Math.round((((picked.protein_per_100g || 0) * fallbackWeight) / 100) * 10) / 10,
+              carbs: matchedFood
+                ? Math.round((((matchedFood.carbs_per_100g ?? matchedFood.carbs) * fallbackWeight) / 100) * 10) / 10
+                : analysis.carbs ||
+                  Math.round((((picked.carbs_per_100g || 0) * fallbackWeight) / 100) * 10) / 10,
+              fats: matchedFood
+                ? Math.round((((matchedFood.fats_per_100g ?? matchedFood.fats) * fallbackWeight) / 100) * 10) / 10
+                : analysis.fats ||
+                  Math.round((((picked.fats_per_100g || 0) * fallbackWeight) / 100) * 10) / 10,
+              hint: analysis.explanation || 'AI 中置信度预估，请确认后保存',
+            });
+            setToast({ message: '识别置信度中等，请确认后保存', type: 'success' });
+            setTimeout(() => setToast(null), 3000);
+          } else {
+            applyEstimate({
+              name: matchedFood?.name || analysis.name || itemName || 'AI estimate',
+              weight: analysis.weight || 100,
+              calories: matchedFood
+                ? Math.round((((matchedFood.calories_per_100g ?? matchedFood.calories) * (analysis.weight || 100)) / 100) * 10) / 10
+                : analysis.calories || 0,
+              protein: matchedFood
+                ? Math.round((((matchedFood.protein_per_100g ?? matchedFood.protein) * (analysis.weight || 100)) / 100) * 10) / 10
+                : analysis.protein || 0,
+              carbs: matchedFood
+                ? Math.round((((matchedFood.carbs_per_100g ?? matchedFood.carbs) * (analysis.weight || 100)) / 100) * 10) / 10
+                : analysis.carbs || 0,
+              fats: matchedFood
+                ? Math.round((((matchedFood.fats_per_100g ?? matchedFood.fats) * (analysis.weight || 100)) / 100) * 10) / 10
+                : analysis.fats || 0,
+              hint: fallbackHint,
+            });
+            setToast({ message: '识别不够稳定，已给出 AI 预估值', type: 'error' });
+            setTimeout(() => setToast(null), 3000);
+          }
+        } else {
+          applyEstimate({
+            name: matchedFood?.name || analysis.name || itemName || 'AI estimate',
+            weight: analysis.weight || Number(itemAmount) || 100,
+            calories: matchedFood
+              ? Math.round((((matchedFood.calories_per_100g ?? matchedFood.calories) * (analysis.weight || Number(itemAmount) || 100)) / 100) * 10) / 10
+              : analysis.calories || 0,
+            protein: matchedFood
+              ? Math.round((((matchedFood.protein_per_100g ?? matchedFood.protein) * (analysis.weight || Number(itemAmount) || 100)) / 100) * 10) / 10
+              : analysis.protein || 0,
+            carbs: matchedFood
+              ? Math.round((((matchedFood.carbs_per_100g ?? matchedFood.carbs) * (analysis.weight || Number(itemAmount) || 100)) / 100) * 10) / 10
+              : analysis.carbs || 0,
+            fats: matchedFood
+              ? Math.round((((matchedFood.fats_per_100g ?? matchedFood.fats) * (analysis.weight || Number(itemAmount) || 100)) / 100) * 10) / 10
+              : analysis.fats || 0,
+            hint: fallbackHint,
+          });
+          setToast({ message: '置信度较低，以下为 AI 预估值，请手动修正后保存', type: 'error' });
+          setTimeout(() => setToast(null), 3000);
+        }
       }
-      setIsEstimating(false);
+      } finally {
+        setIsEstimating(false);
+        setIsImageAnalyzing(false);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      }
     };
     reader.readAsDataURL(file);
   };
@@ -227,6 +743,99 @@ export default function App() {
       console.error(e);
     } finally {
       setIsGeneratingAdvice(false);
+    }
+  };
+
+  const handleHealthCheck = async () => {
+    setIsCheckingHealth(true);
+    const result = await healthCheckEngines();
+    setHealthStatus(result);
+    setIsCheckingHealth(false);
+  };
+
+  const handleSubmitLogForm = async () => {
+    if (!isAdding) return;
+
+    if (isAdding === 'food' && previewCalories !== null) {
+      const payload = {
+        date: selectedDate,
+        type: 'food' as const,
+        name: itemName + (selectedUnit !== 'g' ? ` (${selectedUnitOption?.name || ''})` : ''),
+        amount: parseFloat(itemAmount),
+        food_id: selectedFoodId,
+        unit_name: selectedUnitName,
+        calories: previewCalories,
+        protein: previewMacros?.protein ?? estimatedMacros?.protein ?? 0,
+        carbs: previewMacros?.carbs ?? estimatedMacros?.carbs ?? 0,
+        fats: previewMacros?.fats ?? estimatedMacros?.fats ?? 0,
+      };
+      const url = editingLog ? `/api/logs/${editingLog.id}` : `/api/logs/food`;
+      const method = editingLog ? 'PUT' : 'POST';
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        await fetchLogs();
+        closeAddModal();
+        setToast({ message: editingLog ? '记录已更新' : '记录已添加', type: 'success' });
+        setTimeout(() => setToast(null), 3000);
+      }
+      return;
+    }
+
+    if (isAdding === 'exercise' && estimatedCalories !== null) {
+      const payload = {
+        date: selectedDate,
+        type: 'exercise' as const,
+        name: exerciseType,
+        amount: parseFloat(itemAmount),
+        calories: estimatedCalories,
+        protein: estimatedMacros?.protein ?? 0,
+        carbs: estimatedMacros?.carbs ?? 0,
+        fats: estimatedMacros?.fats ?? 0,
+      };
+      const url = editingLog ? `/api/logs/${editingLog.id}` : `/api/logs/exercise`;
+      const method = editingLog ? 'PUT' : 'POST';
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        await fetchLogs();
+        closeAddModal();
+        setToast({ message: editingLog ? '记录已更新' : '记录已添加', type: 'success' });
+        setTimeout(() => setToast(null), 3000);
+      }
+      return;
+    }
+
+    if (isAdding === 'exercise' && profile) {
+      const calories = calculateExerciseCalories(exerciseType, parseFloat(itemAmount), profile.weightKg ?? profile.weight ?? 70);
+      setEstimatedCalories(calories);
+      setEstimatedMacros({ protein: 0, carbs: 0, fats: 0 });
+      setConfidenceHint('运动热量已按 MET 公式估算，确认后可保存');
+      return;
+    }
+
+    setIsEstimating(true);
+    try {
+      const name = isAdding === 'food' ? itemName : exerciseType;
+      const est = await estimateCalories(profile, name, isAdding, parseFloat(itemAmount));
+      if (est) {
+        setEstimatedCalories(est.calories);
+        setEstimatedMacros({
+          protein: est.protein || 0,
+          carbs: est.carbs || 0,
+          fats: est.fats || 0,
+        });
+        setEstimatedWeight(parseFloat(itemAmount));
+        setConfidenceHint('AI 预估值，可手动修改后保存');
+      }
+    } finally {
+      setIsEstimating(false);
     }
   };
 
@@ -259,6 +868,27 @@ export default function App() {
   };
 
   const isProfileDirty = JSON.stringify(profile) !== JSON.stringify(editProfile);
+  const isDisciplineRoute = routePath === '#/discipline';
+  const habitIconMap: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
+    check: Check,
+    flame: Flame,
+    book: Book,
+    cup: CupSoda,
+    bike: Bike,
+    heart: Heart,
+    brain: Brain,
+    moon: Moon,
+    sun: Sun,
+    camera: Camera,
+    code: Code,
+    coffee: Coffee,
+    utensils: Utensils,
+    smile: Smile,
+    pencil: Pencil,
+    target: Target,
+    droplets: Droplets,
+    activity: Activity,
+  };
 
   const caloriesIn = logs.filter(l => l.type === 'food').reduce((acc, l) => acc + l.calories, 0);
   const caloriesOut = logs.filter(l => l.type === 'exercise').reduce((acc, l) => acc + l.calories, 0);
@@ -282,6 +912,9 @@ export default function App() {
   const netCalories = caloriesIn - caloriesOut;
   const goalCalories = profile?.goal_calories || tdee;
   const remaining = goalCalories - netCalories;
+  const doneHabitCount = todayHabits.filter((habit) => habit.status === 'done').length;
+  const disciplineProgress = todayHabits.length ? Math.round((doneHabitCount / todayHabits.length) * 100) : 0;
+  const disciplinePreviewHabits = todayHabits.slice(0, 4);
 
   const macroData = [
     { name: '蛋白质', value: totalProtein * 4, color: '#10b981' },
@@ -294,6 +927,54 @@ export default function App() {
     { name: '消耗', kcal: caloriesOut, fill: '#f97316' },
     { name: '净值', kcal: netCalories, fill: '#3b82f6' },
   ];
+
+  const amountNumber = Number(itemAmount || 0);
+  const selectedUnitOption = selectedUnit === 'g'
+    ? { id: 'g', name: '克', weight_g: 1 }
+    : customUnits.find((u) => u.id.toString() === selectedUnit);
+  const selectedUnitName = selectedUnit === 'g' ? 'g' : selectedUnitOption?.name || null;
+  const gramsPerUnit = resolveGramsPerUnit(
+    selectedUnitName,
+    customUnits.map((unit) => ({ name: unit.name, gramsPerUnit: unit.weight_g }))
+  );
+  const liveFoodPreview =
+    selectedFood && amountNumber > 0 && gramsPerUnit
+      ? calculateNutritionFromWeight(amountNumber, gramsPerUnit, {
+          caloriesPer100g: selectedFood.calories_per_100g ?? selectedFood.calories,
+          proteinPer100g: selectedFood.protein_per_100g ?? selectedFood.protein,
+          carbsPer100g: selectedFood.carbs_per_100g ?? selectedFood.carbs,
+          fatsPer100g: selectedFood.fats_per_100g ?? selectedFood.fats,
+        })
+      : null;
+  const previewCalories = liveFoodPreview?.totalCalories ?? estimatedCalories;
+  const previewMacros = liveFoodPreview
+    ? {
+        protein: liveFoodPreview.totalProtein,
+        carbs: liveFoodPreview.totalCarbs,
+        fats: liveFoodPreview.totalFats,
+      }
+    : estimatedMacros;
+  const previewMacroRatio = liveFoodPreview?.macroRatio;
+  const previewWeight = liveFoodPreview?.totalWeight ?? estimatedWeight;
+  const sliderMin = selectedUnit === 'g' ? 10 : 0.5;
+  const sliderMax = selectedUnit === 'g' ? 600 : 5;
+  const sliderStep = selectedUnit === 'g' ? 10 : 0.1;
+  const latestBodyMetric = bodyMetrics[0] || null;
+  const previousBodyMetric = bodyMetrics[1] || null;
+  const weightDelta =
+    latestBodyMetric?.weight != null && previousBodyMetric?.weight != null
+      ? Number((latestBodyMetric.weight - previousBodyMetric.weight).toFixed(1))
+      : null;
+  const weightDeltaTone =
+    weightDelta == null
+      ? 'bg-black/5 text-black/45'
+      : weightDelta < 0
+        ? 'bg-emerald-100 text-emerald-700'
+        : profile?.goal === '减脂'
+          ? 'bg-rose-100 text-rose-700'
+          : 'bg-amber-100 text-amber-700';
+  const weightDeltaLabel =
+    weightDelta == null ? '等待第二条记录' : `${weightDelta > 0 ? '↑' : '↓'}${Math.abs(weightDelta).toFixed(1)}kg`;
 
   return (
     <div className="min-h-screen bg-[#F8F9FA] text-[#1A1A1A] font-sans pb-24">
@@ -338,7 +1019,7 @@ export default function App() {
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
-        {activeTab === 'dashboard' && (
+        {!isDisciplineRoute && activeTab === 'dashboard' && (
           <motion.div 
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -451,6 +1132,104 @@ export default function App() {
               <div className="absolute bottom-0 left-0 h-2 bg-emerald-500 transition-all duration-700 ease-out" style={{ width: `${Math.min((netCalories / goalCalories) * 100, 100)}%` }} />
             </div>
 
+            <button
+              type="button"
+              onClick={() => setActiveTab('bodyMetrics')}
+              className="w-full rounded-[36px] border border-black/5 bg-[linear-gradient(135deg,#fff7ed_0%,#ffffff_38%,#f5f7f4_100%)] p-6 text-left shadow-[0_28px_60px_-36px_rgba(15,23,42,0.35)] transition-all hover:shadow-[0_32px_72px_-34px_rgba(15,23,42,0.38)]"
+            >
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-black uppercase tracking-[0.28em] text-black/35">Body Status</p>
+                  <h3 className="mt-2 text-2xl font-black tracking-tight text-slate-900">身体状态预览</h3>
+                  <div className="mt-4 flex items-end gap-3">
+                    <p className="text-4xl font-black text-slate-950">
+                      {latestBodyMetric?.weight != null ? `${latestBodyMetric.weight.toFixed(1)}kg` : '--'}
+                    </p>
+                    <div className={`rounded-full px-3 py-1 text-xs font-black ${weightDeltaTone}`}>
+                      {weightDeltaLabel}
+                    </div>
+                  </div>
+                  <p className="mt-3 text-sm font-bold text-slate-500">
+                    {latestBodyMetric
+                      ? `最近记录于 ${latestBodyMetric.date}，腰围 ${latestBodyMetric.waist ?? '--'}cm，胸围 ${latestBodyMetric.chest ?? '--'}cm`
+                      : '还没有身体档案记录，建议先添加体重和围度。'}
+                  </p>
+                </div>
+                <div className="shrink-0">
+                  {latestBodyMetric?.photoUrl ? (
+                    <div className="h-24 w-24 overflow-hidden rounded-full border-4 border-white shadow-lg">
+                      <img src={latestBodyMetric.photoUrl} alt="latest body" className="h-full w-full object-cover" />
+                    </div>
+                  ) : (
+                    <div className="flex h-24 w-24 items-center justify-center rounded-full border border-dashed border-black/10 bg-white text-xs font-black text-black/30">
+                      无照片
+                    </div>
+                  )}
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                window.location.hash = '#/discipline';
+              }}
+              className="w-full rounded-[36px] border border-black/5 bg-[linear-gradient(135deg,#ecfccb_0%,#ffffff_42%,#f8fafc_100%)] p-6 text-left shadow-[0_28px_60px_-36px_rgba(22,163,74,0.24)] transition-all hover:shadow-[0_32px_72px_-34px_rgba(22,163,74,0.28)]"
+            >
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-black uppercase tracking-[0.28em] text-black/35">Discipline Quick View</p>
+                  <h3 className="mt-2 text-2xl font-black tracking-tight text-slate-900">今日自律进度</h3>
+                  <div className="mt-4 flex items-end gap-3">
+                    <p className="text-4xl font-black text-slate-950">
+                      {doneHabitCount}/{todayHabits.length}
+                    </p>
+                    <div className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-700">
+                      {disciplineProgress}%
+                    </div>
+                  </div>
+                  <p className="mt-3 text-sm font-bold text-slate-500">
+                    {todayHabits.length
+                      ? `已完成 ${doneHabitCount} 个目标，继续保持连续打卡。`
+                      : '还没有自律目标，点击后创建第一条习惯。'}
+                  </p>
+                  <div className="mt-4 h-3 overflow-hidden rounded-full bg-white/80">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-lime-400 transition-all duration-500"
+                      style={{
+                        width: `${disciplineProgress}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="mt-4 flex items-center gap-3">
+                    {disciplinePreviewHabits.length > 0 ? (
+                      disciplinePreviewHabits.map((habit) => {
+                        const HabitIcon = habitIconMap[habit.icon] || Activity;
+                        return (
+                          <div key={habit.habitId} className="group relative">
+                            <div
+                              className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/80 shadow-sm"
+                              style={{ backgroundColor: habit.color || '#16a34a', color: '#ffffff' }}
+                            >
+                              <HabitIcon size={18} />
+                            </div>
+                            <div className="pointer-events-none absolute left-1/2 top-full z-10 mt-2 -translate-x-1/2 rounded-full bg-slate-950 px-3 py-1 text-[10px] font-black text-white opacity-0 transition-opacity group-hover:opacity-100 whitespace-nowrap">
+                              {habit.name}
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <p className="text-xs font-bold text-black/35">创建习惯后，这里会显示正在坚持的目标。</p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-full border-4 border-white bg-slate-950 text-white shadow-lg">
+                  <Target size={28} />
+                </div>
+              </div>
+            </button>
+
             {/* AI Advice Section */}
             <div className="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-[32px] p-6 text-white shadow-lg shadow-indigo-500/20">
               <div className="flex items-center justify-between mb-4">
@@ -476,7 +1255,7 @@ export default function App() {
             {/* Quick Actions */}
             <div className="grid grid-cols-3 gap-4">
               <button 
-                onClick={() => setIsAdding('food')}
+                onClick={() => openCreateLogModal('food')}
                 className="bg-white p-4 rounded-3xl border border-black/5 shadow-sm hover:border-emerald-500/30 transition-all flex flex-col items-center gap-2 group"
               >
                 <div className="w-10 h-10 bg-emerald-50 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
@@ -495,7 +1274,7 @@ export default function App() {
                 <input type="file" accept="image/*" ref={fileInputRef} onChange={handleImageUpload} className="hidden" />
               </button>
               <button 
-                onClick={() => setIsAdding('exercise')}
+                onClick={() => openCreateLogModal('exercise')}
                 className="bg-white p-4 rounded-3xl border border-black/5 shadow-sm hover:border-orange-500/30 transition-all flex flex-col items-center gap-2 group"
               >
                 <div className="w-10 h-10 bg-orange-50 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
@@ -504,6 +1283,26 @@ export default function App() {
                 <span className="text-xs font-bold">记运动</span>
               </button>
             </div>
+
+            <button
+              onClick={() => setActiveTab('fasting')}
+              className="group relative w-full overflow-hidden rounded-[32px] border border-emerald-200/60 bg-[linear-gradient(135deg,#f0fdf4_0%,#dcfce7_46%,#ecfccb_100%)] p-6 text-left shadow-[0_22px_50px_-28px_rgba(34,197,94,0.55)]"
+            >
+              <div className="absolute right-5 top-5 flex h-12 w-12 items-center justify-center rounded-2xl bg-white/70 text-emerald-600 shadow-sm transition-transform group-hover:scale-110">
+                <MoonStar size={22} />
+              </div>
+              <p className="text-[10px] font-black uppercase tracking-[0.26em] text-emerald-700/60">Fasting Mode</p>
+              <h3 className="mt-2 text-2xl font-black tracking-tight text-slate-900">轻断食面板已上线</h3>
+              <p className="mt-2 max-w-md text-sm font-bold text-slate-600">
+                环形进度、当前生理阶段、快捷方案切换都集中在一个页面，适合随手打开就看。
+              </p>
+              <div className="mt-5 flex items-center gap-4 text-sm font-black text-slate-800">
+                <span className="rounded-full bg-white/80 px-3 py-1">
+                  {fastingStatus?.active ? `进行中 ${fastingStatus.progressPercent.toFixed(0)}%` : '待开始'}
+                </span>
+                <span>{fastingStatus?.phase || '未开始'}</span>
+              </div>
+            </button>
 
             {/* Timeline */}
             <div className="space-y-4">
@@ -529,7 +1328,7 @@ export default function App() {
                         <div>
                           <p className="font-black text-sm">{log.name}</p>
                           <p className="text-[10px] font-bold text-black/30 uppercase tracking-wider">
-                            {log.amount} {log.type === 'food' ? '克' : '分钟'} • {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {log.amount} {log.type === 'food' ? '克' : '分钟'} ? {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </p>
                         </div>
                       </div>
@@ -542,12 +1341,20 @@ export default function App() {
                             <p className="text-[9px] text-black/20 font-bold">P:{log.protein} C:{log.carbs} F:{log.fats}</p>
                           )}
                         </div>
-                        <button 
-                          onClick={() => handleDeleteLog(log.id)}
-                          className="opacity-0 group-hover:opacity-100 p-2 hover:bg-red-50 hover:text-red-600 rounded-xl transition-all"
-                        >
-                          <Trash2 size={16} />
-                        </button>
+                        <div className="flex items-center gap-2 opacity-0 transition-all group-hover:opacity-100">
+                          <button
+                            onClick={() => handleEditLog(log)}
+                            className="rounded-xl p-2 transition-all hover:bg-blue-50 hover:text-blue-600"
+                          >
+                            <Pencil size={16} />
+                          </button>
+                          <button 
+                            onClick={() => handleDeleteLog(log.id)}
+                            className="rounded-xl p-2 transition-all hover:bg-red-50 hover:text-red-600"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))
@@ -557,7 +1364,7 @@ export default function App() {
           </motion.div>
         )}
 
-        {activeTab === 'logs' && (
+        {!isDisciplineRoute && activeTab === 'logs' && (
           <motion.div 
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
@@ -574,7 +1381,7 @@ export default function App() {
                     <div>
                       <p className="font-black text-sm">{log.name}</p>
                       <p className="text-[10px] font-bold text-black/30 uppercase tracking-wider">
-                        {log.amount} {log.type === 'food' ? '克' : '分钟'} • {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {log.amount} {log.type === 'food' ? '克' : '分钟'} ? {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </p>
                     </div>
                   </div>
@@ -584,12 +1391,20 @@ export default function App() {
                         {log.type === 'food' ? '+' : '-'}{log.calories}
                       </p>
                     </div>
-                    <button 
-                      onClick={() => handleDeleteLog(log.id)}
-                      className="p-2 hover:bg-red-50 hover:text-red-600 rounded-xl transition-all"
-                    >
-                      <Trash2 size={16} />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleEditLog(log)}
+                        className="rounded-xl p-2 transition-all hover:bg-blue-50 hover:text-blue-600"
+                      >
+                        <Pencil size={16} />
+                      </button>
+                      <button 
+                        onClick={() => handleDeleteLog(log.id)}
+                        className="rounded-xl p-2 transition-all hover:bg-red-50 hover:text-red-600"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -597,7 +1412,44 @@ export default function App() {
           </motion.div>
         )}
 
-        {activeTab === 'profile' && profile && (
+        {!isDisciplineRoute && activeTab === 'fasting' && (
+          <FastingPage
+            fastingStatus={fastingStatus}
+            selectedPlan={selectedFastingPlan}
+            isSubmitting={isSubmittingFasting}
+            onSelectPlan={setSelectedFastingPlan}
+            onStart={handleStartFasting}
+            onEnd={handleEndFasting}
+            onRefresh={fetchFastingStatus}
+          />
+        )}
+
+        {!isDisciplineRoute && activeTab === 'bodyMetrics' && (
+          <BodyMetricsPage
+            metrics={bodyMetrics}
+            isSaving={isSavingBodyMetric || isDeletingBodyMetric}
+            onCreate={handleCreateBodyMetric}
+            onDelete={handleDeleteBodyMetric}
+          />
+        )}
+
+        {isDisciplineRoute && (
+          <SelfDisciplinePage
+            date={habitSummaryDate}
+            habits={todayHabits}
+            habitCatalog={habitCatalog}
+            heatmap={habitHeatmap}
+            habitHistory={habitHistory}
+            isLoading={isSyncingHabits}
+            onCheckIn={handleHabitCheckIn}
+            onCreateHabit={handleCreateHabit}
+            onUpdateHabit={handleUpdateHabit}
+            onArchiveHabit={handleArchiveHabit}
+            onLoadHabitHistory={handleLoadHabitHistory}
+          />
+        )}
+
+        {!isDisciplineRoute && activeTab === 'profile' && profile && (
           <motion.div 
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
@@ -699,42 +1551,93 @@ export default function App() {
                 <div className="space-y-2 col-span-2 pt-6 pb-2 border-b border-black/5">
                   <h3 className="text-lg font-black text-black/80 flex items-center gap-2">
                     <Brain size={20} className="text-purple-500" />
-                    AI 模型配置
+                    AI 双轨配置
                   </h3>
-                  <p className="text-xs text-black/40 font-medium">配置您的 AI 助手，支持多模型切换。</p>
+                  <p className="text-xs text-black/40 font-medium">将文本分析和视觉识别分开配置，避免一个模型同时承担两类任务。</p>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-black/30">AI 建议提供商</label>
-                  <select 
-                    name="ai_provider" 
-                    value={editProfile.ai_provider || 'gemini'} 
-                    onChange={e => {
-                      const provider = e.target.value;
-                      let defaultModel = 'gemini-3-flash-preview';
-                      if (provider === 'zhipu') defaultModel = 'glm-4';
-                      if (provider === 'tongyi') defaultModel = 'qwen-turbo';
-                      setEditProfile({...editProfile, ai_provider: provider, ai_model: defaultModel});
-                    }}
-                    className="w-full bg-[#F8F9FA] border-none rounded-[10px] px-4 py-4 font-bold focus:ring-2 focus:ring-purple-500 transition-all"
-                  >
-                    <option value="gemini">Google Gemini (推荐)</option>
-                    <option value="zhipu">智谱 AI (GLM-4)</option>
-                    <option value="tongyi">通义千问 (Qwen)</option>
-                  </select>
+                <div className="col-span-2 rounded-[24px] border border-black/5 bg-[#F8F9FA] p-5">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-black/35">Text AI</p>
+                  <h4 className="mt-2 text-lg font-black text-slate-900">文本模型配置</h4>
+                  <p className="mt-1 text-xs font-bold text-black/40">用于食物搜索、营养推理、膳食平衡结构化输出和报告生成。</p>
+                  <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-black/30">服务商</label>
+                      <select
+                        name="text_ai_provider"
+                        value={editProfile.text_ai_provider || 'silra'}
+                        onChange={e => {
+                          const provider = e.target.value;
+                          let defaultModel = 'gemini-2.5-flash';
+                          if (provider === 'zhipu') defaultModel = 'glm-4';
+                          if (provider === 'tongyi') defaultModel = 'qwen-mt-plus';
+                          if (provider === 'silra') defaultModel = 'deepseek-v3';
+                          setEditProfile({...editProfile, text_ai_provider: provider, text_ai_model: defaultModel});
+                        }}
+                        className="w-full bg-white border-none rounded-[10px] px-4 py-4 font-bold focus:ring-2 focus:ring-purple-500 transition-all"
+                      >
+                        <option value="gemini">Google Gemini</option>
+                        <option value="silra">Silra API</option>
+                        <option value="zhipu">智谱 AI</option>
+                        <option value="tongyi">通义千问</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-black/30">模型</label>
+                      <select
+                        name="text_ai_model"
+                        value={editProfile.text_ai_model || ''}
+                        onChange={e => setEditProfile({...editProfile, text_ai_model: e.target.value})}
+                        className="w-full bg-white border-none rounded-[10px] px-4 py-4 font-bold focus:ring-2 focus:ring-purple-500 transition-all"
+                      >
+                        {availableTextModels.map(model => (
+                          <option key={model} value={model}>{model}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-black/30">具体模型</label>
-                  <select 
-                    name="ai_model" 
-                    value={editProfile.ai_model || ''} 
-                    onChange={e => setEditProfile({...editProfile, ai_model: e.target.value})}
-                    className="w-full bg-[#F8F9FA] border-none rounded-[10px] px-4 py-4 font-bold focus:ring-2 focus:ring-purple-500 transition-all"
-                  >
-                    {availableModels.map(model => (
-                      <option key={model} value={model}>{model}</option>
-                    ))}
-                  </select>
+
+                <div className="col-span-2 rounded-[24px] border border-black/5 bg-[#F8F9FA] p-5">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-black/35">Vision AI</p>
+                  <h4 className="mt-2 text-lg font-black text-slate-900">视觉模型配置</h4>
+                  <p className="mt-1 text-xs font-bold text-black/40">用于拍照识别第一步“看图描述”。推荐视觉模型，不要用纯文本模型。</p>
+                  <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-black/30">服务商</label>
+                      <select
+                        name="vision_ai_provider"
+                        value={editProfile.vision_ai_provider || 'tongyi'}
+                        onChange={e => {
+                          const provider = e.target.value;
+                          let defaultModel = 'gemini-3.1-pro-preview';
+                          if (provider === 'zhipu') defaultModel = 'glm-4.5v';
+                          if (provider === 'tongyi') defaultModel = 'qwen-vl-plus';
+                          if (provider === 'silra') defaultModel = 'gemini-3.1-pro-preview';
+                          setEditProfile({...editProfile, vision_ai_provider: provider, vision_ai_model: defaultModel});
+                        }}
+                        className="w-full bg-white border-none rounded-[10px] px-4 py-4 font-bold focus:ring-2 focus:ring-purple-500 transition-all"
+                      >
+                        <option value="tongyi">通义千问</option>
+                        <option value="zhipu">智谱 AI</option>
+                        <option value="gemini">Google Gemini</option>
+                        <option value="silra">Silra API</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-black/30">模型</label>
+                      <select
+                        name="vision_ai_model"
+                        value={editProfile.vision_ai_model || ''}
+                        onChange={e => setEditProfile({...editProfile, vision_ai_model: e.target.value})}
+                        className="w-full bg-white border-none rounded-[10px] px-4 py-4 font-bold focus:ring-2 focus:ring-purple-500 transition-all"
+                      >
+                        {availableVisionModels.map(model => (
+                          <option key={model} value={model}>{model}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
                 </div>
                 
                 <div className="space-y-2 col-span-2">
@@ -780,6 +1683,7 @@ export default function App() {
                     </button>
                   </div>
                   <div className="bg-[#F8F9FA] rounded-2xl p-4 space-y-2">
+                    <p className="text-[10px] font-bold text-black/30">单位按食物绑定。请先在录入饮食时选择具体食物，再维护该食物的单位。</p>
                     {customUnits.length === 0 ? (
                       <p className="text-xs text-black/30 font-bold text-center">暂无自定义单位</p>
                     ) : (
@@ -793,7 +1697,7 @@ export default function App() {
                             type="button"
                             onClick={async () => {
                               await fetch(`/api/units/${u.id}`, { method: 'DELETE' });
-                              fetchUnits();
+                              fetchUnits(selectedFoodId || undefined);
                             }}
                             className="text-red-500 p-1 hover:bg-red-50 rounded-lg"
                           >
@@ -804,6 +1708,92 @@ export default function App() {
                     )}
                   </div>
                 </div>
+              </div>
+              <div className="mt-6 rounded-[24px] border border-black/5 bg-[#F8F9FA] p-5 space-y-3">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('bodyMetrics')}
+                  className="flex w-full items-center justify-between rounded-[22px] border border-black/5 bg-white px-4 py-4 text-left transition-all hover:shadow-md"
+                >
+                  <div>
+                    <h3 className="text-sm font-black uppercase tracking-widest text-black/50">身体档案</h3>
+                    <p className="mt-1 text-xs font-bold text-black/40">进入围度时间轴，查看历史照片和最新体态数据</p>
+                  </div>
+                  <div className="rounded-full bg-black px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-white">
+                    打开
+                  </div>
+                </button>
+
+                <div className="rounded-[22px] border border-black/5 bg-white px-4 py-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-[0.22em] text-black/35">最新围度</p>
+                      <p className="mt-1 text-sm font-black text-slate-900">
+                        {bodyMetrics[0]?.date || '暂无记录'}
+                      </p>
+                    </div>
+                    <div className="text-right text-xs font-bold text-black/45">
+                      <p>体重 {bodyMetrics[0]?.weight ?? '--'}kg</p>
+                      <p>腰围 {bodyMetrics[0]?.waist ?? '--'}cm</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-black uppercase tracking-widest text-black/50">API Health Check</h3>
+                    <p className="text-xs text-black/40 font-bold">分别检查文本链路和视觉链路。服务商和模型会同时显示，便于排查配置偏差。</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleHealthCheck}
+                    disabled={isCheckingHealth}
+                    className="bg-black text-white px-4 py-2 rounded-full text-xs font-black disabled:opacity-50"
+                  >
+                    {isCheckingHealth ? '检测中...' : '测试连接'}
+                  </button>
+                </div>
+                {healthStatus && (
+                  <div className="space-y-2">
+                    {[
+                      {
+                        key: 'text',
+                        title: '文本链路',
+                        item: healthStatus.text,
+                      },
+                      {
+                        key: 'vision',
+                        title: '视觉链路',
+                        item: healthStatus.vision,
+                      },
+                    ].map(({ key, title, item }) => (
+                      <div key={key} className="rounded-2xl border border-black/5 bg-white px-4 py-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <span className={`h-3 w-3 rounded-full ${item.ok ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                            <div>
+                              <p className="text-sm font-black">{title}</p>
+                              <p className="text-xs font-bold text-black/40">
+                                {item.provider} · {item.model}
+                              </p>
+                            </div>
+                          </div>
+                          <div className={`text-xs font-black px-3 py-1 rounded-full ${item.ok ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                            {item.ok ? `${item.latencyMs || 0}ms` : (item.errorType || 'error')}
+                          </div>
+                        </div>
+                        <p className="mt-2 text-xs font-bold text-black/45">
+                          {item.message || (item.ok ? 'healthy' : 'failed')}
+                        </p>
+                        {item.responseSnippet && (
+                          <p className="mt-1 text-[11px] font-bold text-black/30">
+                            响应片段: {item.responseSnippet}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
               <button 
                 type="submit" 
@@ -855,6 +1845,12 @@ export default function App() {
             >
               <h3 className="text-xl font-black mb-4">添加自定义单位</h3>
               <div className="space-y-4">
+                <FoodSearchSelect
+                  selectedFood={unitTargetFood}
+                  onSelect={handleSelectUnitTargetFood}
+                  placeholder="先搜索并选择食物"
+                  helperText="单位必须绑定到具体 food_id，例如米饭的一碗和汤的一碗是两条独立记录。"
+                />
                 <input 
                   placeholder="单位名称 (如: 碗)" 
                   value={newUnit.name || ''}
@@ -877,19 +1873,20 @@ export default function App() {
                 />
                 <button 
                   onClick={async () => {
-                    if (!newUnit.name || !newUnit.weight_g) return;
+                    if (!unitTargetFood?.id || !newUnit.name || !newUnit.weight_g) return;
                     await fetch('/api/units', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ ...newUnit, food_id: selectedFoodId })
+                      body: JSON.stringify({ ...newUnit, food_id: unitTargetFood.id })
                     });
-                    fetchUnits(selectedFoodId || undefined);
+                    fetchUnits(unitTargetFood.id);
                     setNewUnit({});
                     setShowUnitModal(false);
                   }}
-                  className="w-full bg-black text-white font-black py-4 rounded-2xl hover:bg-black/80 transition-all"
+                  className="w-full bg-black text-white font-black py-4 rounded-2xl hover:bg-black/80 transition-all disabled:opacity-50"
+                  disabled={!unitTargetFood?.id}
                 >
-                  保存单位 {selectedFoodId ? '(绑定当前食物)' : '(通用)'}
+                  保存单位 {unitTargetFood?.id ? `(绑定 ${unitTargetFood.name})` : '(请先选择食物)'}
                 </button>
               </div>
             </motion.div>
@@ -899,16 +1896,24 @@ export default function App() {
 
       {/* Bottom Navigation */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-xl border-t border-black/5 pb-10 pt-4 px-8 z-20">
-        <div className="max-w-2xl mx-auto flex items-center justify-around">
-          <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'dashboard' ? 'text-black scale-110' : 'text-black/20'}`}>
+        <div className="max-w-2xl mx-auto grid grid-cols-5 items-center">
+          <button onClick={() => { window.location.hash = '#/'; setActiveTab('dashboard'); }} className={`flex flex-col items-center gap-1 transition-all ${!isDisciplineRoute && activeTab === 'dashboard' ? 'text-black scale-110' : 'text-black/20'}`}>
             <Activity size={24} strokeWidth={activeTab === 'dashboard' ? 3 : 2} />
             <span className="text-[9px] font-black uppercase tracking-tighter">首页</span>
           </button>
-          <button onClick={() => setActiveTab('logs')} className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'logs' ? 'text-black scale-110' : 'text-black/20'}`}>
+          <button onClick={() => { window.location.hash = '#/'; setActiveTab('logs'); }} className={`flex flex-col items-center gap-1 transition-all ${!isDisciplineRoute && activeTab === 'logs' ? 'text-black scale-110' : 'text-black/20'}`}>
             <Scale size={24} strokeWidth={activeTab === 'logs' ? 3 : 2} />
             <span className="text-[9px] font-black uppercase tracking-tighter">记录</span>
           </button>
-          <button onClick={() => setActiveTab('profile')} className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'profile' ? 'text-black scale-110' : 'text-black/20'}`}>
+          <button onClick={() => { window.location.hash = '#/'; setActiveTab('fasting'); }} className={`flex flex-col items-center gap-1 transition-all ${!isDisciplineRoute && activeTab === 'fasting' ? 'text-black scale-110' : 'text-black/20'}`}>
+            <MoonStar size={24} strokeWidth={activeTab === 'fasting' ? 3 : 2} />
+            <span className="text-[9px] font-black uppercase tracking-tighter">断食</span>
+          </button>
+          <button onClick={() => { window.location.hash = '#/discipline'; }} className={`flex flex-col items-center gap-1 transition-all ${isDisciplineRoute ? 'text-black scale-110' : 'text-black/20'}`}>
+            <Target size={24} strokeWidth={isDisciplineRoute ? 3 : 2} />
+            <span className="text-[9px] font-black uppercase tracking-tighter">自律</span>
+          </button>
+          <button onClick={() => { window.location.hash = '#/'; setActiveTab('profile'); }} className={`flex flex-col items-center gap-1 transition-all ${!isDisciplineRoute && activeTab === 'profile' ? 'text-black scale-110' : 'text-black/20'}`}>
             <User size={24} strokeWidth={activeTab === 'profile' ? 3 : 2} />
             <span className="text-[9px] font-black uppercase tracking-tighter">我的</span>
           </button>
@@ -918,240 +1923,48 @@ export default function App() {
       {/* Add Modal */}
       <AnimatePresence>
         {isAdding && (
-          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={closeAddModal}
-              className="absolute inset-0 bg-black/60 backdrop-blur-md"
-            />
-            <motion.div 
-              initial={{ y: '100%' }}
-              animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              className="relative w-full max-w-md bg-white rounded-t-[48px] sm:rounded-[48px] p-8 shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto"
-            >
-              <div className="flex items-center justify-between mb-8">
-                <h3 className="text-2xl font-black flex items-center gap-2">
-                  {isAdding === 'food' ? <Utensils className="text-emerald-600" /> : <Activity className="text-orange-600" />}
-                  添加{isAdding === 'food' ? '饮食' : '运动'}
-                </h3>
-                <button onClick={closeAddModal} className="p-2 bg-black/5 rounded-full text-black/40 hover:text-black transition-all">
-                  <ChevronDown size={20} />
-                </button>
-              </div>
-
-              {isAdding === 'food' && (
-                <div className="mb-6 space-y-4">
-                  <div className="relative">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-black/20" size={18} />
-                    <input 
-                      value={searchQuery}
-                      onChange={(e) => handleSearchFood(e.target.value)}
-                      placeholder="搜索食物数据库..."
-                      className="w-full bg-[#F8F9FA] border-none rounded-2xl px-12 py-4 font-bold focus:ring-2 focus:ring-black transition-all"
-                    />
-                  </div>
-                  
-                  {searchResults.length > 0 && (
-                    <div className="bg-[#F8F9FA] rounded-2xl p-2 space-y-1">
-                      {searchResults.map(food => (
-                        <button 
-                          key={food.id}
-                          onClick={() => {
-                            setItemName(food.name);
-                            setSelectedFoodId(food.id);
-                            fetchUnits(food.id);
-                            setItemAmount('100');
-                            setSearchResults([]);
-                            setSearchQuery('');
-                          }}
-                          className="w-full text-left p-3 hover:bg-white rounded-xl transition-all flex justify-between items-center group"
-                        >
-                          <span className="font-bold">{food.name}</span>
-                          <span className="text-xs text-black/30 group-hover:text-black">{food.calories} kcal/100g</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  <button 
-                    onClick={() => setShowCustomFood(!showCustomFood)}
-                    className="text-xs font-bold text-black/40 hover:text-black flex items-center gap-1"
-                  >
-                    {showCustomFood ? '收起自定义' : '没有找到？手动添加自定义食物'}
-                    {showCustomFood ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                  </button>
-
-                  {showCustomFood && (
-                    <div className="bg-[#F8F9FA] rounded-3xl p-6 space-y-4 border border-black/5">
-                      <input id="custom-name" placeholder="食物名称" className="w-full bg-white rounded-xl px-4 py-3 text-sm font-bold" />
-                      <div className="grid grid-cols-2 gap-3">
-                        <input id="custom-cal" type="number" placeholder="热量 (kcal)" className="w-full bg-white rounded-xl px-4 py-3 text-sm font-bold" />
-                        <input id="custom-pro" type="number" placeholder="蛋白质 (g)" className="w-full bg-white rounded-xl px-4 py-3 text-sm font-bold" />
-                        <input id="custom-carb" type="number" placeholder="碳水 (g)" className="w-full bg-white rounded-xl px-4 py-3 text-sm font-bold" />
-                        <input id="custom-fat" type="number" placeholder="脂肪 (g)" className="w-full bg-white rounded-xl px-4 py-3 text-sm font-bold" />
-                      </div>
-                      <button 
-                        onClick={async () => {
-                          const name = (document.getElementById('custom-name') as HTMLInputElement).value;
-                          const cal = parseFloat((document.getElementById('custom-cal') as HTMLInputElement).value);
-                          const pro = parseFloat((document.getElementById('custom-pro') as HTMLInputElement).value);
-                          const carb = parseFloat((document.getElementById('custom-carb') as HTMLInputElement).value);
-                          const fat = parseFloat((document.getElementById('custom-fat') as HTMLInputElement).value);
-                          
-                          if (!name || isNaN(cal)) return;
-
-                          await fetch('/api/foods', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ name, calories: cal, protein: pro, carbs: carb, fats: fat })
-                          });
-                          
-                          handleAddLog('food', { name, amount: 100, calories: cal, protein: pro, carbs: carb, fats: fat });
-                        }}
-                        className="w-full bg-black text-white py-3 rounded-xl text-sm font-bold"
-                      >
-                        保存并记录
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="space-y-6">
-                {isAdding === 'exercise' ? (
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-black/30">运动类型</label>
-                    <select 
-                      value={exerciseType}
-                      onChange={(e) => setExerciseType(e.target.value)}
-                      className="w-full bg-[#F8F9FA] border-none rounded-2xl px-4 py-4 font-bold focus:ring-2 focus:ring-black transition-all appearance-none"
-                    >
-                      <option value="跑步">跑步 (Running)</option>
-                      <option value="慢跑">慢跑 (Jogging)</option>
-                      <option value="游泳">游泳 (Swimming)</option>
-                      <option value="骑行">骑行 (Cycling)</option>
-                      <option value="瑜伽">瑜伽 (Yoga)</option>
-                      <option value="力量训练">力量训练 (Strength)</option>
-                      <option value="台球">台球 (Billiards)</option>
-                      <option value="爬坡">爬坡 (Inclined Walking)</option>
-                      <option value="爬楼梯">爬楼梯 (Stair Climbing)</option>
-                      <option value="篮球">篮球</option>
-                      <option value="足球">足球</option>
-                      <option value="羽毛球">羽毛球</option>
-                      <option value="跳绳">跳绳</option>
-                    </select>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-black/30">名称</label>
-                    <div className="relative">
-                      <input 
-                        value={itemName}
-                        onChange={(e) => setItemName(e.target.value)}
-                        placeholder="例如：牛油果吐司"
-                        className="w-full bg-[#F8F9FA] border-none rounded-2xl px-4 py-4 pr-12 font-bold focus:ring-2 focus:ring-black transition-all"
-                      />
-                      <Sparkles className="absolute right-4 top-1/2 -translate-y-1/2 text-black/10" size={20} />
-                    </div>
-                  </div>
-                )}
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-black/30">
-                    {isAdding === 'food' ? '数量' : '时长 (分钟)'}
-                  </label>
-                  <div className="flex gap-2">
-                    <input 
-                      type="number"
-                      value={itemAmount}
-                      onChange={(e) => setItemAmount(e.target.value)}
-                      placeholder={isAdding === 'food' ? "150" : "30"}
-                      className="flex-1 bg-[#F8F9FA] border-none rounded-2xl px-4 py-4 font-bold focus:ring-2 focus:ring-black transition-all"
-                    />
-                    {isAdding === 'food' && (
-                      <select
-                        value={selectedUnit}
-                        onChange={(e) => setSelectedUnit(e.target.value)}
-                        className="w-24 bg-[#F8F9FA] border-none rounded-2xl px-2 py-4 font-bold focus:ring-2 focus:ring-black transition-all text-sm"
-                      >
-                        <option value="g">克 (g)</option>
-                        {customUnits.map(u => (
-                          <option key={u.id} value={u.id}>{u.name}</option>
-                        ))}
-                      </select>
-                    )}
-                  </div>
-                </div>
-
-                {estimatedCalories !== null && (
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-black/30">热量 (kcal) - AI 预估</label>
-                    <input 
-                      type="number"
-                      value={estimatedCalories}
-                      onChange={(e) => setEstimatedCalories(parseInt(e.target.value))}
-                      className="w-full bg-emerald-50 border-emerald-100 border rounded-2xl px-4 py-4 font-bold focus:ring-2 focus:ring-emerald-500 transition-all text-emerald-700"
-                    />
-                    <p className="text-[9px] text-emerald-600/50 font-bold">您可以手动修正 AI 预估的数值</p>
-                  </div>
-                )}
-
-                <button 
-                  disabled={isEstimating || (isAdding === 'food' && !itemName) || !itemAmount}
-                  onClick={async () => {
-                    if (estimatedCalories !== null) {
-                      let finalAmount = parseFloat(itemAmount);
-                      let finalCalories = estimatedCalories;
-                      
-                      await handleAddLog(isAdding, {
-                        name: isAdding === 'food' ? itemName + (selectedUnit !== 'g' ? ` (${customUnits.find(u => u.id.toString() === selectedUnit)?.name})` : '') : exerciseType,
-                        amount: finalAmount,
-                        calories: finalCalories,
-                        protein: 0, carbs: 0, fats: 0 
-                      });
-                      setEstimatedCalories(null);
-                    } else {
-                      const name = isAdding === 'food' ? itemName : exerciseType;
-                      
-                      if (isAdding === 'exercise' && profile) {
-                         const calories = calculateExerciseCalories(exerciseType, parseFloat(itemAmount), profile.weight);
-                         setEstimatedCalories(calories);
-                         return;
-                      }
-
-                      setIsEstimating(true);
-                      const est = await estimateCalories(profile, name, isAdding, parseFloat(itemAmount));
-                      if (est) {
-                        setEstimatedCalories(est.calories);
-                      }
-                      setIsEstimating(false);
-                    }
-                  }}
-                  className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-black py-5 rounded-[10px] flex items-center justify-center gap-3 disabled:opacity-50 hover:shadow-lg hover:shadow-emerald-500/20 transition-all shadow-md"
-                >
-                  {isEstimating ? (
-                    <>
-                      <div className="w-5 h-5 border-3 border-white/30 border-t-white rounded-full animate-spin" />
-                      AI 估算中...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles size={20} />
-                      {estimatedCalories !== null ? '确认并记录' : 'AI 智能估算'}
-                    </>
-                  )}
-                </button>
-                <p className="text-[9px] text-center text-black/20 font-bold uppercase tracking-[0.2em]">
-                  由 Gemini AI 提供智能营养分析支持
-                </p>
-              </div>
-            </motion.div>
-          </div>
+          <LogForm
+            mode={editingLog ? 'edit' : 'create'}
+            type={isAdding}
+            profile={profile}
+            itemName={itemName}
+            itemAmount={itemAmount}
+            exerciseType={exerciseType}
+            selectedFood={selectedFood}
+            selectedFoodId={selectedFoodId}
+            selectedUnit={selectedUnit}
+            selectedUnitName={selectedUnitName}
+            customUnits={customUnits}
+            estimatedCalories={estimatedCalories}
+            estimatedMacros={estimatedMacros}
+            estimatedWeight={estimatedWeight}
+            previewCalories={previewCalories}
+            previewMacros={previewMacros}
+            previewMacroRatio={previewMacroRatio}
+            previewWeight={previewWeight}
+            confidenceHint={confidenceHint}
+            analysisReport={analysisReport}
+            healthScore={healthScore}
+            alertLevel={alertLevel}
+            isEstimating={isEstimating}
+            isImageAnalyzing={isImageAnalyzing}
+            onClose={closeAddModal}
+            onOpenUnitModal={() => {
+              setUnitTargetFood(selectedFood)
+              setShowUnitModal(true)
+            }}
+            onItemNameChange={setItemName}
+            onItemAmountChange={setItemAmount}
+            onExerciseTypeChange={setExerciseType}
+            onSelectedUnitChange={setSelectedUnit}
+            onSelectedFoodChange={selectFoodForLog}
+            onManualEstimateChange={setEstimatedCalories}
+            onAddCustomFood={handleAddCustomFood}
+            onSubmit={handleSubmitLogForm}
+          />
         )}
       </AnimatePresence>
     </div>
   );
 }
+

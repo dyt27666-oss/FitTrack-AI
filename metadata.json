@@ -1,5 +1,5 @@
 {
   "name": "FitTrack AI",
-  "description": "AI-powered fitness and nutrition tracker. Log meals and workouts with Gemini-assisted calorie estimation.",
+  "description": "AI-powered fitness and nutrition tracker with dual-engine analysis, fasting, body metrics, and self-discipline tracking.",
   "requestFramePermissions": ["camera"]
 }
