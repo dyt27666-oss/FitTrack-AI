@@ -1,4 +1,4 @@
-![FitTrack AI Logo](./docs/screenshots/FitTrack%20AI_logo.png)
+![FitTrack AI Logo](./docs/screenshots/fittrack-ai-logo.png)
 
 # FitTrack-AI
 
