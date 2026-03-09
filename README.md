@@ -1,3 +1,5 @@
+![FitTrack AI Logo](./docs/screenshots/FitTrack%20AI_logo.png)
+
 # FitTrack-AI
 
 FitTrack-AI is a `React + Express + SQLite` health tracking system built around a closed feedback loop: log, recognize, analyze, and adjust. It combines nutrition logging, exercise records, body metrics, intermittent fasting, self-discipline tracking, and dual-engine AI analysis in a single product.
