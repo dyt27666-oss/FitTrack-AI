@@ -126,16 +126,82 @@ export interface FoodMacroRatio {
 }
 
 export interface BalancedDietAnalysisReport {
+  summary?: string;
   plate_comment: string;
   vegetables_fruits_ratio: number;
   whole_grains_ratio: number;
   healthy_protein_ratio: number;
+  score?: {
+    vegetable_score?: number;
+    grain_score?: number;
+    protein_score?: number;
+  };
   gi_level: 'low' | 'medium' | 'high';
   processing_level: 'minimally_processed' | 'processed' | 'ultra_processed';
   strengths: string[];
+  weaknesses?: string[];
   risks: string[];
+  improvements?: string[];
   suggestions: string[];
+  reasoning?: string;
   education_tip: string;
+}
+
+export interface HealthAnalyticsMetrics {
+  calories_in: number;
+  calories_out: number;
+  net_calories: number;
+  protein_g: number;
+  carbs_g: number;
+  fats_g: number;
+  habit_completion_rate: number;
+  completed_habits: number;
+  total_habits: number;
+}
+
+export interface DailyHealthInsightReport {
+  title: string;
+  status_tag: string;
+  summary: string;
+  sections: {
+    overview: string;
+    energy: string;
+    diet: string;
+    nutrition: string;
+    activity: string;
+    discipline: string;
+    risks: string;
+    next_actions: string[];
+  };
+  metrics: HealthAnalyticsMetrics;
+}
+
+export interface WeeklyHealthReport {
+  title: string;
+  status_tag: string;
+  summary: string;
+  week_range: string;
+  sections: {
+    overview: string;
+    diet_trend: string;
+    discipline_trend: string;
+    high_risk_window: string;
+    forecast: string;
+    next_week_actions: string[];
+  };
+  metrics: {
+    avg_calories_in: number;
+    avg_calories_out: number;
+    avg_net_calories: number;
+    avg_habit_completion_rate: number;
+    total_completed_habits: number;
+    total_habits: number;
+    max_streaks: Array<{
+      habit_id: number;
+      name: string;
+      max_streak: number;
+    }>;
+  };
 }
 
 export interface BodyMetric {

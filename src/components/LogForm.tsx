@@ -114,7 +114,14 @@ export function LogForm(props: LogFormProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center">
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-black/60 backdrop-blur-md" />
-      <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} className="relative max-h-[90vh] w-full max-w-md overflow-y-auto rounded-t-[48px] bg-white p-8 shadow-2xl sm:rounded-[48px]">
+      <motion.div
+        initial={{ y: "100%" }}
+        animate={{ y: 0 }}
+        exit={{ y: "100%" }}
+        className={`relative max-h-[90vh] w-full overflow-y-auto rounded-t-[48px] bg-white p-8 shadow-2xl sm:rounded-[48px] ${
+          isFood ? "max-w-[44rem]" : "max-w-md"
+        }`}
+      >
         <div className="mb-8 flex items-center justify-between">
           <h3 className="flex items-center gap-2 text-2xl font-black">
             {isFood ? <Utensils className="text-emerald-600" /> : <Activity className="text-orange-600" />}

@@ -2,7 +2,7 @@
 import fs from "fs";
 import path from "path";
 
-export type UserGoal = "鍑忚剛" | "澧炶倢" | "缁存寔";
+export type UserGoal = "减脂" | "增肌" | "维持";
 
 export interface UserProfile {
   id: number;
@@ -198,13 +198,13 @@ export class FitTrackDB {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL DEFAULT '鐢ㄦ埛',
-        sex TEXT DEFAULT '鍏朵粬',
+        name TEXT NOT NULL DEFAULT '用户',
+        sex TEXT DEFAULT '其他',
         age INTEGER DEFAULT 25,
         heightCm REAL DEFAULT 170,
         weightKg REAL DEFAULT 70,
         activityLevel REAL DEFAULT 1.2 CHECK(activityLevel >= 1.2 AND activityLevel <= 1.9),
-        goal TEXT DEFAULT '缁存寔' CHECK(goal IN ('鍑忚剛','澧炶倢','缁存寔')),
+        goal TEXT DEFAULT '维持' CHECK(goal IN ('减脂','增肌','维持')),
         goalCalories INTEGER DEFAULT 2000,
         aiProvider TEXT DEFAULT 'silra',
         aiModel TEXT DEFAULT 'deepseek-v3',

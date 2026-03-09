@@ -1,6 +1,87 @@
-@import "tailwindcss";
+﻿@import "tailwindcss";
 
 @theme {
-  --font-sans: "Inter", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+:root,
+html,
+body,
+#root {
+  font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif !important;
+}
+
+svg text,
+.recharts-text,
+.recharts-layer,
+.chart-text-safe,
+.report-text-safe,
+[data-report-font="safe"] {
+  font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif !important;
+}
+
+.report-metric-value {
+  font-size: 0.875rem;
+  line-height: 1.1rem;
+}
+
+.report-metric-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media print {
+  html,
+  body,
+  #root {
+    background: #ffffff !important;
+    color: #111827 !important;
+    min-height: auto !important;
+  }
+
+  nav,
+  .report-print-hidden,
+  .report-screen-only,
+  .toast-container,
+  .modal-backdrop,
+  .modal-surface {
+    display: none !important;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  .report-print-root,
+  .report-print-root * {
+    visibility: visible;
+  }
+
+  .report-print-root {
+    position: static !important;
+    inset: auto !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: #ffffff !important;
+  }
+
+  .report-print-page {
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: #ffffff !important;
+    break-inside: avoid;
+  }
+
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
 }

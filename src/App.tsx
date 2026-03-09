@@ -43,8 +43,8 @@ import {
 } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { Profile, Log, Food, CustomUnit, AIHealthCheckSummary } from './types';
-import type { BodyMetric, BalancedDietAnalysisReport, Habit, HabitHeatmapCell, HabitHistorySeries, HabitTodayItem } from './types';
-import { analyzeFoodImage, archiveHabit, checkInHabit, createHabit, estimateCalories, fetchHabitHeatmap, fetchHabitHistory, fetchHabits, fetchTodayHabits, generateDailyAdvice, healthCheckEngines, searchFoods, updateHabit } from './services/aiClient';
+import type { BodyMetric, BalancedDietAnalysisReport, DailyHealthInsightReport, Habit, HabitHeatmapCell, HabitHistorySeries, HabitTodayItem, WeeklyHealthReport } from './types';
+import { analyzeFoodImage, archiveHabit, checkInHabit, createHabit, estimateCalories, fetchDailyHealthInsight, fetchHabitHeatmap, fetchHabitHistory, fetchHabits, fetchTodayHabits, fetchWeeklyHealthReport, healthCheckEngines, searchFoods, updateHabit } from './services/aiClient';
 import { LLMManager } from './services/llmManager';
 import { calculateNutritionFromWeight, resolveGramsPerUnit } from './utils/nutritionCalculator';
 import { LogForm } from './components/LogForm';
@@ -52,6 +52,7 @@ import { FoodSearchSelect } from './components/FoodSearchSelect';
 import { FastingPage, type FastingStatusView } from './components/FastingPage';
 import { BodyMetricsPage } from './components/BodyMetricsPage';
 import { SelfDisciplinePage } from './pages/SelfDisciplinePage';
+import { HealthReportPage } from './pages/HealthReportPage';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'logs' | 'fasting' | 'bodyMetrics' | 'profile'>('dashboard');
@@ -63,8 +64,10 @@ export default function App() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [logs, setLogs] = useState<Log[]>([]);
   const [loading, setLoading] = useState(true);
-  const [advice, setAdvice] = useState<string | null>(null);
-  const [isGeneratingAdvice, setIsGeneratingAdvice] = useState(false);
+  const [analyticsTab, setAnalyticsTab] = useState<'daily' | 'weekly'>('daily');
+  const [dailyHealthInsight, setDailyHealthInsight] = useState<DailyHealthInsightReport | null>(null);
+  const [weeklyHealthReport, setWeeklyHealthReport] = useState<WeeklyHealthReport | null>(null);
+  const [isLoadingAnalytics, setIsLoadingAnalytics] = useState(false);
 
   // Form states
   const [isAdding, setIsAdding] = useState<'food' | 'exercise' | null>(null);
@@ -154,6 +157,17 @@ export default function App() {
   }, [selectedDate]);
 
   useEffect(() => {
+    if (routePath === '#/analytics/daily') {
+      void fetchAnalyticsReport('daily');
+      return;
+    }
+    if (routePath === '#/analytics/weekly') {
+      void fetchAnalyticsReport('weekly');
+      return;
+    }
+  }, [selectedDate, routePath]);
+
+  useEffect(() => {
     fetchFastingStatus();
   }, []);
 
@@ -211,6 +225,24 @@ export default function App() {
       setHabitCatalog(Array.isArray(habits) ? habits : []);
     } catch (error) {
       console.error('Failed to fetch discipline data', error);
+    }
+  };
+
+  const fetchAnalyticsReport = async (mode: 'daily' | 'weekly') => {
+    setIsLoadingAnalytics(true);
+    try {
+      if (mode === 'daily') {
+        const report = await fetchDailyHealthInsight(selectedDate);
+        setDailyHealthInsight(report);
+      } else {
+        const report = await fetchWeeklyHealthReport();
+        setWeeklyHealthReport(report);
+      }
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : '加载健康分析失败', type: 'error' });
+      setTimeout(() => setToast(null), 3000);
+    } finally {
+      setIsLoadingAnalytics(false);
     }
   };
 
@@ -733,16 +765,14 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
-  const handleGetAdvice = async () => {
-    if (!profile || logs.length === 0) return;
-    setIsGeneratingAdvice(true);
-    try {
-      const result = await generateDailyAdvice(logs, profile);
-      setAdvice(result);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsGeneratingAdvice(false);
+  const handleAnalyticsTabChange = async (mode: 'daily' | 'weekly') => {
+    setAnalyticsTab(mode);
+    if (mode === 'daily' && !dailyHealthInsight) {
+      await fetchAnalyticsReport('daily');
+      return;
+    }
+    if (mode === 'weekly' && !weeklyHealthReport) {
+      await fetchAnalyticsReport('weekly');
     }
   };
 
@@ -869,6 +899,8 @@ export default function App() {
 
   const isProfileDirty = JSON.stringify(profile) !== JSON.stringify(editProfile);
   const isDisciplineRoute = routePath === '#/discipline';
+  const analyticsRouteMode = routePath === '#/analytics/weekly' ? 'weekly' : routePath === '#/analytics/daily' ? 'daily' : null;
+  const isAnalyticsRoute = analyticsRouteMode !== null;
   const habitIconMap: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
     check: Check,
     flame: Flame,
@@ -1019,7 +1051,7 @@ export default function App() {
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
-        {!isDisciplineRoute && activeTab === 'dashboard' && (
+        {!isDisciplineRoute && !isAnalyticsRoute && activeTab === 'dashboard' && (
           <motion.div 
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -1224,32 +1256,53 @@ export default function App() {
                     )}
                   </div>
                 </div>
-                <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-full border-4 border-white bg-slate-950 text-white shadow-lg">
-                  <Target size={28} />
+                <div className="relative flex h-24 w-24 shrink-0 items-center justify-center rounded-[30px] border border-emerald-100/80 bg-[linear-gradient(135deg,#ffffff_0%,#f3fff7_100%)] shadow-[0_18px_40px_-24px_rgba(16,185,129,0.45)]">
+                  <div className="absolute h-16 w-16 rounded-full border border-emerald-200/90" />
+                  <div className="absolute h-10 w-10 rounded-full border border-emerald-300/90" />
+                  <div className="absolute h-3.5 w-3.5 rounded-full bg-emerald-500 shadow-[0_0_0_6px_rgba(16,185,129,0.12)]" />
+                  <div className="absolute bottom-3 rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.16em] text-emerald-700">
+                    streak
+                  </div>
                 </div>
               </div>
             </button>
 
-            {/* AI Advice Section */}
-            <div className="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-[32px] p-6 text-white shadow-lg shadow-indigo-500/20">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <Brain size={20} />
-                  <h3 className="font-bold">AI 健康建议</h3>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setAnalyticsTab('daily');
+                  window.location.hash = '#/analytics/daily';
+                }}
+                className="group overflow-hidden rounded-[32px] bg-[linear-gradient(135deg,#6B46FF_0%,#8056FF_48%,#A05BFF_100%)] p-6 text-left text-white shadow-[0_28px_60px_-34px_rgba(99,64,255,0.55)] transition-all hover:shadow-[0_32px_80px_-36px_rgba(99,64,255,0.65)]"
+              >
+                <p className="text-[10px] font-black uppercase tracking-[0.26em] text-white/65">Daily Insight</p>
+                <h3 className="mt-3 text-2xl font-black tracking-tight">今日健康洞察</h3>
+                <p className="mt-3 text-sm font-bold leading-6 text-white/82">
+                  根据今天的饮食、运动和自律记录，生成一份可直接指导下一餐和晚间安排的健康洞察。
+                </p>
+                <div className="mt-5 inline-flex rounded-full bg-white/14 px-3 py-1 text-xs font-black text-white/90">
+                  {dailyHealthInsight?.status_tag || '点击生成'}
                 </div>
-                <button 
-                  onClick={handleGetAdvice}
-                  disabled={isGeneratingAdvice || logs.length === 0}
-                  className="bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-full text-xs font-bold backdrop-blur-md transition-all disabled:opacity-50"
-                >
-                  {isGeneratingAdvice ? '生成中...' : '获取建议'}
-                </button>
-              </div>
-              {advice ? (
-                <p className="text-sm leading-relaxed opacity-90">{advice}</p>
-              ) : (
-                <p className="text-sm opacity-70 italic">记录一些饮食和运动，让 AI 为您提供专业评价和建议。</p>
-              )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setAnalyticsTab('weekly');
+                  window.location.hash = '#/analytics/weekly';
+                }}
+                className="group overflow-hidden rounded-[32px] bg-[linear-gradient(135deg,#4B2CFF_0%,#6D48FF_44%,#8A5DFF_100%)] p-6 text-left text-white shadow-[0_28px_60px_-34px_rgba(76,44,255,0.55)] transition-all hover:shadow-[0_32px_80px_-36px_rgba(76,44,255,0.65)]"
+              >
+                <p className="text-[10px] font-black uppercase tracking-[0.26em] text-white/65">Weekly Report</p>
+                <h3 className="mt-3 text-2xl font-black tracking-tight">本周健康周报</h3>
+                <p className="mt-3 text-sm font-bold leading-6 text-white/82">
+                  复盘过去 7 天的饮食、自律和波动窗口，并给出下周执行阈值与风险防守建议。
+                </p>
+                <div className="mt-5 inline-flex rounded-full bg-white/14 px-3 py-1 text-xs font-black text-white/90">
+                  {weeklyHealthReport?.status_tag || '点击生成'}
+                </div>
+              </button>
             </div>
 
             {/* Quick Actions */}
@@ -1364,7 +1417,7 @@ export default function App() {
           </motion.div>
         )}
 
-        {!isDisciplineRoute && activeTab === 'logs' && (
+        {!isDisciplineRoute && !isAnalyticsRoute && activeTab === 'logs' && (
           <motion.div 
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
@@ -1412,7 +1465,7 @@ export default function App() {
           </motion.div>
         )}
 
-        {!isDisciplineRoute && activeTab === 'fasting' && (
+        {!isDisciplineRoute && !isAnalyticsRoute && activeTab === 'fasting' && (
           <FastingPage
             fastingStatus={fastingStatus}
             selectedPlan={selectedFastingPlan}
@@ -1424,7 +1477,7 @@ export default function App() {
           />
         )}
 
-        {!isDisciplineRoute && activeTab === 'bodyMetrics' && (
+        {!isDisciplineRoute && !isAnalyticsRoute && activeTab === 'bodyMetrics' && (
           <BodyMetricsPage
             metrics={bodyMetrics}
             isSaving={isSavingBodyMetric || isDeletingBodyMetric}
@@ -1449,7 +1502,21 @@ export default function App() {
           />
         )}
 
-        {!isDisciplineRoute && activeTab === 'profile' && profile && (
+        {isAnalyticsRoute && (
+          <HealthReportPage
+            mode={analyticsRouteMode}
+            dailyReport={dailyHealthInsight}
+            weeklyReport={weeklyHealthReport}
+            isLoading={isLoadingAnalytics}
+            onRefresh={fetchAnalyticsReport}
+            onBack={() => {
+              window.location.hash = '#/';
+              setActiveTab('dashboard');
+            }}
+          />
+        )}
+
+        {!isDisciplineRoute && !isAnalyticsRoute && activeTab === 'profile' && profile && (
           <motion.div 
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
@@ -1897,8 +1964,8 @@ export default function App() {
       {/* Bottom Navigation */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-xl border-t border-black/5 pb-10 pt-4 px-8 z-20">
         <div className="max-w-2xl mx-auto grid grid-cols-5 items-center">
-          <button onClick={() => { window.location.hash = '#/'; setActiveTab('dashboard'); }} className={`flex flex-col items-center gap-1 transition-all ${!isDisciplineRoute && activeTab === 'dashboard' ? 'text-black scale-110' : 'text-black/20'}`}>
-            <Activity size={24} strokeWidth={activeTab === 'dashboard' ? 3 : 2} />
+          <button onClick={() => { window.location.hash = '#/'; setActiveTab('dashboard'); }} className={`flex flex-col items-center gap-1 transition-all ${(!isDisciplineRoute && (activeTab === 'dashboard' || isAnalyticsRoute)) ? 'text-black scale-110' : 'text-black/20'}`}>
+            <Activity size={24} strokeWidth={(activeTab === 'dashboard' || isAnalyticsRoute) ? 3 : 2} />
             <span className="text-[9px] font-black uppercase tracking-tighter">首页</span>
           </button>
           <button onClick={() => { window.location.hash = '#/'; setActiveTab('logs'); }} className={`flex flex-col items-center gap-1 transition-all ${!isDisciplineRoute && activeTab === 'logs' ? 'text-black scale-110' : 'text-black/20'}`}>

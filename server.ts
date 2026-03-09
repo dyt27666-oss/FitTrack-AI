@@ -9,12 +9,16 @@ import { db } from "./src/server/db";
 import {
   AIProxyError,
   type AIProvider,
+  type DailyHealthInsightResult,
   type FoodExtractionResult,
   type ImageRecognitionResult,
   type TaskModelProfile,
+  type WeeklyHealthReportResult,
+  buildDailyHolisticInsightPrompt,
   buildFoodExtractionPrompt,
   buildImageStructuringPrompt,
   buildVisionDescriptionPrompt,
+  buildWeeklyHealthReportPrompt,
   callProvider,
   defaultTaskModelProfile,
   parseJson,
@@ -230,9 +234,193 @@ const resolveHeatLevel = (rate: number): 0 | 1 | 2 | 3 | 4 => {
 const HEALTH_CHECK_IMAGE_BASE64 =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAdSURBVDhPY3jv4vKfEsyALkAqHjVg1IBRAwaLAQDnAXYfiKSRsQAAAABJRU5ErkJggg==";
 
+const normalizeStringArray = (value: unknown, fallback: string[]): string[] => {
+  if (!Array.isArray(value)) return fallback;
+  const next = value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return next.length ? next : fallback;
+};
+
+const normalizeAnalysisReport = (report: ImageRecognitionResult["analysis_report"]) => ({
+  summary:
+    typeof report?.summary === "string" && report.summary.trim()
+      ? report.summary
+      : "这是一份基于图像识别的营养分析，适合先作为记录和调整的参考。",
+  plate_comment:
+    typeof report?.plate_comment === "string" && report.plate_comment.trim()
+      ? report.plate_comment
+      : "系统已生成保底营养分析，建议结合实际食材和分量做微调。",
+  vegetables_fruits_ratio:
+    typeof report?.vegetables_fruits_ratio === "number" ? report.vegetables_fruits_ratio : 20,
+  whole_grains_ratio: typeof report?.whole_grains_ratio === "number" ? report.whole_grains_ratio : 25,
+  healthy_protein_ratio:
+    typeof report?.healthy_protein_ratio === "number" ? report.healthy_protein_ratio : 20,
+  gi_level: report?.gi_level || "medium",
+  processing_level: report?.processing_level || "processed",
+  strengths: normalizeStringArray(report?.strengths, ["提供基础热量与宏量营养素估算"]),
+  weaknesses: normalizeStringArray(report?.weaknesses ?? report?.risks, ["图像识别存在误差，结果仅供记录前参考"]),
+  risks: normalizeStringArray(report?.risks ?? report?.weaknesses, ["图像识别存在误差，结果仅供记录前参考"]),
+  improvements: normalizeStringArray(report?.improvements ?? report?.suggestions, ["建议保存前校正食物种类与重量"]),
+  suggestions: normalizeStringArray(report?.suggestions ?? report?.improvements, ["建议保存前校正食物种类与重量"]),
+  reasoning:
+    typeof report?.reasoning === "string" && report.reasoning.trim()
+      ? report.reasoning
+      : "当前结论基于图片中的食材结构、估计分量、烹饪方式和膳食平衡建议进行综合判断。",
+  education_tip:
+    typeof report?.education_tip === "string" && report.education_tip.trim()
+      ? report.education_tip
+      : "膳食平衡建议强调蔬果、全谷物和优质蛋白的结构平衡。",
+});
+
+const normalizeDailyHealthInsight = (
+  report: Partial<DailyHealthInsightResult> | null | undefined,
+  metrics: DailyHealthInsightResult["metrics"]
+): DailyHealthInsightResult => ({
+  title: typeof report?.title === "string" && report.title.trim() ? report.title : "今日健康洞察",
+  status_tag: typeof report?.status_tag === "string" && report.status_tag.trim() ? report.status_tag : "稳态管理日",
+  summary:
+    typeof report?.summary === "string" && report.summary.trim()
+      ? report.summary
+      : "系统已结合今天的饮食、运动和自律记录生成一份健康洞察，可作为今天后续安排的依据。",
+  sections: {
+    overview:
+      typeof report?.sections?.overview === "string" && report.sections.overview.trim()
+        ? report.sections.overview
+        : "今天的记录已具备基础分析价值，但如果晚间还有进食或运动，建议继续补全后再回看整体状态。",
+    energy:
+      typeof report?.sections?.energy === "string" && report.sections.energy.trim()
+        ? report.sections.energy
+        : "系统已根据当前摄入和消耗生成热量收支判断，晚间新增记录会继续影响净值。",
+    diet:
+      typeof report?.sections?.diet === "string" && report.sections.diet.trim()
+        ? report.sections.diet
+        : "今日饮食分析会围绕已记录食物的实际结构、烹饪方式和热量来源展开。",
+    nutrition:
+      typeof report?.sections?.nutrition === "string" && report.sections.nutrition.trim()
+        ? report.sections.nutrition
+        : "系统会结合蛋白质、碳水和脂肪的实际摄入情况判断今天的营养结构。",
+    activity:
+      typeof report?.sections?.activity === "string" && report.sections.activity.trim()
+        ? report.sections.activity
+        : "活动分析会结合今日运动记录和缺失的活动量来生成。",
+    discipline:
+      typeof report?.sections?.discipline === "string" && report.sections.discipline.trim()
+        ? report.sections.discipline
+        : "自律分析会结合完成率和当前连胜状态，判断今天的执行稳定性。",
+    risks:
+      typeof report?.sections?.risks === "string" && report.sections.risks.trim()
+        ? report.sections.risks
+        : "若当前记录仍不完整，系统会用更保守的方式提示今天的潜在问题。",
+    next_actions: normalizeStringArray(report?.sections?.next_actions, [
+      "下一餐先补足优质蛋白和蔬菜，再决定是否追加主食。",
+      "下午优先安排一次轻到中等强度活动，避免长时间久坐。",
+      "晚上补全剩余记录，确认今天的热量收支是否仍在目标范围内。",
+      "如果今天自律完成率偏低，先降低任务门槛，优先保住连续性。",
+    ]),
+  },
+  metrics,
+});
+
+const normalizeWeeklyHealthReport = (
+  report: Partial<WeeklyHealthReportResult> | null | undefined,
+  weekRange: string,
+  metrics: WeeklyHealthReportResult["metrics"]
+): WeeklyHealthReportResult => ({
+  title: typeof report?.title === "string" && report.title.trim() ? report.title : "本周健康周报",
+  status_tag:
+    typeof report?.status_tag === "string" && report.status_tag.trim() ? report.status_tag : "恢复调整期",
+  summary:
+    typeof report?.summary === "string" && report.summary.trim()
+      ? report.summary
+      : "系统已结合本周饮食、自律与行为数据生成一份周报，用于复盘和下周阈值调整。",
+  week_range: weekRange,
+  sections: {
+    overview:
+      typeof report?.sections?.overview === "string" && report.sections.overview.trim()
+        ? report.sections.overview
+        : "本周已有可用于复盘的基础数据，但仍建议持续保持饮食与习惯记录完整。",
+    diet_trend:
+      typeof report?.sections?.diet_trend === "string" && report.sections.diet_trend.trim()
+        ? report.sections.diet_trend
+        : "系统会围绕一周热量和营养结构波动总结饮食趋势。",
+    discipline_trend:
+      typeof report?.sections?.discipline_trend === "string" && report.sections.discipline_trend.trim()
+        ? report.sections.discipline_trend
+        : "系统会围绕本周完成率和连胜变化总结自律趋势。",
+    high_risk_window:
+      typeof report?.sections?.high_risk_window === "string" && report.sections.high_risk_window.trim()
+        ? report.sections.high_risk_window
+        : "系统会结合断更和低完成率日期识别高危时段。",
+    forecast:
+      typeof report?.sections?.forecast === "string" && report.sections.forecast.trim()
+        ? report.sections.forecast
+        : "下周预测会基于本周行为波动和执行稳定性给出判断。",
+    next_week_actions: normalizeStringArray(report?.sections?.next_week_actions, [
+      "下周先把最容易中断的习惯降到更容易完成的门槛。",
+      "将高危时段前置设置提醒或替代动作，减少断更概率。",
+      "维持饮食记录完整度，优先修复热量和蛋白质波动最大的时段。",
+      "把周中最容易失控的一餐提前设计替代方案，降低随机性。",
+    ]),
+  },
+  metrics,
+});
+
+const summarizeHabitStatus = (habits: Array<{ name: string; status: "pending" | "done" | "missed"; current_streak: number }>) => {
+  const completed = habits.filter((habit) => habit.status === "done").length;
+  const missed = habits.filter((habit) => habit.status === "missed").length;
+  const total = habits.length;
+  return { completed, missed, total, rate: total ? Number((completed / total).toFixed(3)) : 0 };
+};
+
+const aggregateLogsByDate = (logs: any[]) => {
+  const map = new Map<
+    string,
+    {
+      caloriesIn: number;
+      caloriesOut: number;
+      protein: number;
+      carbs: number;
+      fats: number;
+      foodCount: number;
+      exerciseCount: number;
+    }
+  >();
+  for (const log of logs) {
+    const current = map.get(log.date) || {
+      caloriesIn: 0,
+      caloriesOut: 0,
+      protein: 0,
+      carbs: 0,
+      fats: 0,
+      foodCount: 0,
+      exerciseCount: 0,
+    };
+    if (log.type === "food") {
+      current.caloriesIn += Number(log.calories || 0);
+      current.protein += Number(log.protein || 0);
+      current.carbs += Number(log.carbs || 0);
+      current.fats += Number(log.fats || 0);
+      current.foodCount += 1;
+    } else {
+      current.caloriesOut += Number(log.calories || 0);
+      current.exerciseCount += 1;
+    }
+    map.set(log.date, current);
+  }
+  return map;
+};
+
+const buildWeeklyStatusTag = (avgCompletionRate: number, avgNetCalories: number) => {
+  if (avgCompletionRate >= 0.75 && avgNetCalories <= 200) return "代谢加速期";
+  if (avgCompletionRate >= 0.5) return "恢复调整期";
+  return "结构失衡期";
+};
+
 const buildFallbackImageRecognition = (reason: string): ImageRecognitionResult => ({
-  primary_food_name: "AI 妯＄硦璇嗗埆椁愰",
-  primary_food: "AI 妯＄硦璇嗗埆椁愰",
+  primary_food_name: "AI 模糊识别餐食",
+  primary_food: "AI 模糊识别餐食",
   is_edible: true,
   confidence: 35,
   estimated_weight_g: 200,
@@ -251,18 +439,22 @@ const buildFallbackImageRecognition = (reason: string): ImageRecognitionResult =
   },
   health_score: 58,
   alert_level: "yellow",
-  analysis_report: {
-    plate_comment: "这份餐食来自系统保底估算，建议在保存前校正实际重量与食材构成。",
+  analysis_report: normalizeAnalysisReport({
+    summary: "系统已生成一份保底营养分析。这份结果适合先帮助你完成记录，再结合真实分量做进一步修正。",
+    plate_comment: "这份餐食当前来自系统保底估算，因此更适合作为方向性参考，而不是最终精确值。按照默认判断，这顿饭的主能量来源仍以主食或混合餐食中的碳水为主，蔬菜和水果占比不足，优质蛋白来源也不够明确。如果这份餐食实际包含更多用油、浓酱或油炸元素，那么真实热量通常会比现在更高。",
     vegetables_fruits_ratio: 20,
     whole_grains_ratio: 25,
     healthy_protein_ratio: 20,
     gi_level: "medium",
     processing_level: "processed",
-    strengths: ["提供了基础热量和三大营养素估算", "避免前端出现空白结果"],
-    risks: ["蔬果比例偏低", "识别误差较大时健康评分仅供参考"],
-    suggestions: ["补一份深色蔬菜", "主食优先换成全谷物", "保存前微调克数"],
-    education_tip: "膳食平衡建议强调蔬菜和水果应占更高比例，土豆不计入蔬菜份额。",
-  },
+    strengths: ["即使识别失败，系统仍保留了可继续使用的热量和三大营养素结果。", "这份分析至少能帮助用户先判断餐盘结构大方向，而不是停留在空白页面。", "保底估算能让后续手动微调更高效，避免从零开始输入。"],
+    weaknesses: ["当前结果的准确性依赖保底估算，克数和热量误差可能较大。", "蔬果比例和优质蛋白比例都偏保守，不能代表真实最佳情况。", "若实际烹饪更油、更咸或含更多配菜，这份估算会低估热量密度。"],
+    risks: ["当前结果的准确性依赖保底估算，克数和热量误差可能较大。", "蔬果比例和优质蛋白比例都偏保守，不能代表真实最佳情况。", "若实际烹饪更油、更咸或含更多配菜，这份估算会低估热量密度。"],
+    improvements: ["保存前先校正这份餐食的大致重量，至少让克数更接近真实值。", "如果这是正餐，建议补一份深色蔬菜，让餐盘结构更完整。", "如果主食是精制碳水，下一餐可尝试替换为全谷物或杂粮。", "如果优质蛋白不足，可补充鸡蛋、鱼、虾、豆腐或瘦肉。"],
+    suggestions: ["保存前先校正这份餐食的大致重量，至少让克数更接近真实值。", "如果这是正餐，建议补一份深色蔬菜，让餐盘结构更完整。", "如果主食是精制碳水，下一餐可尝试替换为全谷物或杂粮。", "如果优质蛋白不足，可补充鸡蛋、鱼、虾、豆腐或瘦肉。"],
+    reasoning: "这次评分偏保守，主要因为系统是在图像信息不足的前提下给出保底估算。当前最明显的问题不是单一热量高低，而是餐盘结构信息不完整、蔬果比例偏低、优质蛋白判断不稳定，所以灯色和得分都会更谨慎。",
+    education_tip: "膳食平衡建议强调的是长期结构：蔬果是否稳定充足、主食是否过度精制、蛋白质来源是否优质、加工度是否过高。单次热量并不等于整体健康质量。",
+  }),
   hint: `由于图片模糊、识别失败或网络超时，此为系统默认估算值，请手动微调。原因: ${reason}`,
   candidates: [
     {
@@ -434,6 +626,7 @@ const normalizeImageRecognitionResult = (parsed: ImageRecognitionResult): ImageR
   parsed.fats_per_100g = f100;
   const macroCalories = { protein: parsed.estimated_protein_g * 4, carbs: parsed.estimated_carbs_g * 4, fats: parsed.estimated_fats_g * 9 };
   const totalMacroCalories = macroCalories.protein + macroCalories.carbs + macroCalories.fats;
+  parsed.analysis_report = normalizeAnalysisReport(parsed.analysis_report);
   parsed.estimated_p_c_f = totalMacroCalories > 0
     ? {
         protein_ratio: Number(((macroCalories.protein / totalMacroCalories) * 100).toFixed(1)),
@@ -671,6 +864,270 @@ async function startServer() {
       return;
     }
     res.status(single.ok ? 200 : 502).json(single);
+  });
+
+  app.get("/api/analytics/daily", async (req, res) => {
+    const date = typeof req.query.date === "string" && req.query.date.trim() ? req.query.date : toDateOnly(new Date());
+    try {
+      const profile = db.getProfile(USER_ID);
+      const taskProfile = resolveTaskModelProfile(profile);
+      const logs = db.getLogs(USER_ID, date);
+      const habits = db.listHabits(USER_ID).map((habit) => {
+        const todayLog = db.getHabitLog(USER_ID, habit.id, date);
+        const streakLogs = db.listHabitLogsForHabitBeforeDate(USER_ID, habit.id, date, 366);
+        return {
+          name: habit.name,
+          status: (todayLog?.status || "pending") as "pending" | "done" | "missed",
+          current_streak: computeCurrentStreak(streakLogs, date),
+        };
+      });
+
+      const foods = logs
+        .filter((log) => log.type === "food")
+        .map((log) => ({
+          name: log.name,
+          calories: Number(log.calories || 0),
+          protein: Number(log.protein || 0),
+          carbs: Number(log.carbs || 0),
+          fats: Number(log.fats || 0),
+          amount: Number(log.amount || 0),
+          unit_name: log.unit_name || null,
+        }));
+      const exercises = logs
+        .filter((log) => log.type === "exercise")
+        .map((log) => ({
+          name: log.name,
+          calories: Number(log.calories || 0),
+          amount: Number(log.amount || 0),
+        }));
+      const habitSummary = summarizeHabitStatus(habits);
+      const metrics: DailyHealthInsightResult["metrics"] = {
+        calories_in: Number(foods.reduce((sum, item) => sum + item.calories, 0).toFixed(1)),
+        calories_out: Number(exercises.reduce((sum, item) => sum + item.calories, 0).toFixed(1)),
+        net_calories: 0,
+        protein_g: Number(foods.reduce((sum, item) => sum + item.protein, 0).toFixed(1)),
+        carbs_g: Number(foods.reduce((sum, item) => sum + item.carbs, 0).toFixed(1)),
+        fats_g: Number(foods.reduce((sum, item) => sum + item.fats, 0).toFixed(1)),
+        habit_completion_rate: habitSummary.rate,
+        completed_habits: habitSummary.completed,
+        total_habits: habitSummary.total,
+      };
+      metrics.net_calories = Number((metrics.calories_in - metrics.calories_out).toFixed(1));
+
+      const { prompt, systemInstruction } = buildDailyHolisticInsightPrompt({
+        date,
+        profile: {
+          goal: profile.goal,
+          goalCalories: profile.goalCalories,
+          sex: profile.sex,
+          age: profile.age,
+          heightCm: profile.heightCm,
+          weightKg: profile.weightKg,
+        },
+        foods,
+        exercises,
+        habits,
+        metrics,
+      });
+
+      try {
+        const raw = await callProvider({
+          provider: taskProfile.textProvider,
+          model: taskProfile.textModel,
+          prompt,
+          systemInstruction,
+        });
+        const parsed = parseJson<DailyHealthInsightResult>(raw);
+        res.json(normalizeDailyHealthInsight(parsed, metrics));
+      } catch (error) {
+        res.json(
+          normalizeDailyHealthInsight(
+            {
+              status_tag: habitSummary.rate >= 0.7 ? "稳态管理日" : "调整修复日",
+              summary: "系统已基于今天的饮食、运动和自律记录生成一份保底洞察。若继续补全记录，后续建议会更具体。",
+              sections: {
+                overview:
+                  "从当前记录看，今天已经形成了基本的健康行为轨迹，但仍可能因为晚间摄入或活动变化而改变整体判断。现阶段最重要的不是追求绝对精确，而是确保剩余时间的策略更稳健。",
+                energy:
+                  "当前热量净值会受到剩余餐次和活动量影响。如果今天摄入已经偏高，后续更适合通过控制晚餐结构和增加轻活动来修正，而不是单纯依赖极端节食补救。",
+                diet:
+                  "今天的饮食判断会优先看已记录食物的种类、分量和烹饪方式。若当前主食或高能量食物占比偏高，下一餐更适合用蔬菜和优质蛋白拉回结构。",
+                nutrition:
+                  "三大营养素的分布需要跟全天背景一起看。若蛋白质偏低，晚上应优先补蛋白；若碳水偏高，则下一餐应控制精制主食并增加蔬菜体积。",
+                activity:
+                  exercises.length > 0
+                    ? "今天已经有运动记录，后续重点是避免长时间静坐，并把活动安排得更平稳。"
+                    : "今天尚未形成明确运动消耗，下午到晚上更适合安排一次轻到中等强度活动，至少打断久坐状态。",
+                discipline:
+                  habitSummary.total > 0
+                    ? `当前习惯完成率为 ${Math.round(habitSummary.rate * 100)}%。如果完成率偏低，今天最重要的是保住连续性，而不是一次性追求过高目标。`
+                    : "当前尚无足够自律数据，建议至少完成一项可执行的小目标，帮助建立节奏。",
+                risks:
+                  "今天最值得警惕的问题通常来自两个方向：一是热量摄入与活动量不匹配，二是晚间因为疲劳或放松导致记录中断和进食失控。",
+                next_actions: [
+                  "下一餐优先安排一份优质蛋白和一份蔬菜，再决定主食量。",
+                  "下午或傍晚安排 20-30 分钟轻到中等强度活动，先打断久坐。",
+                  "如果今天还有未完成习惯，先完成最容易的一项，优先保住连续性。",
+                  "晚上睡前回看今天记录，确认是否需要补蛋白、减主食或减少夜间加餐。",
+                ],
+              },
+            },
+            metrics
+          )
+        );
+      }
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to build daily analytics" });
+    }
+  });
+
+  app.get("/api/analytics/weekly", async (_req, res) => {
+    const end = new Date();
+    const { from, to } = buildDateRangeEndingAt(7, end);
+    const weekRange = `${from} ~ ${to}`;
+    try {
+      const profile = db.getProfile(USER_ID);
+      const taskProfile = resolveTaskModelProfile(profile);
+      const habits = db.listAllHabits(USER_ID);
+      const weeklyLogs: any[] = [];
+      for (let cursor = new Date(from); toDateOnly(cursor) <= to; cursor.setDate(cursor.getDate() + 1)) {
+        weeklyLogs.push(...db.getLogs(USER_ID, toDateOnly(cursor)));
+      }
+      const weeklyHabitLogs = db.listHabitLogsInRange(USER_ID, from, to);
+      const logsByDate = aggregateLogsByDate(weeklyLogs);
+      const habitLogsByDate = new Map<string, Array<{ habitId: number; status: string }>>();
+      for (const log of weeklyHabitLogs) {
+        const current = habitLogsByDate.get(log.date) || [];
+        current.push({ habitId: log.habitId, status: log.status });
+        habitLogsByDate.set(log.date, current);
+      }
+
+      const dailyNutrition: Array<Record<string, unknown>> = [];
+      const dailyDiscipline: Array<Record<string, unknown>> = [];
+      let totalCaloriesIn = 0;
+      let totalCaloriesOut = 0;
+      let totalCompletedHabits = 0;
+      let totalHabitSlots = 0;
+
+      for (let cursor = new Date(from); toDateOnly(cursor) <= to; cursor.setDate(cursor.getDate() + 1)) {
+        const date = toDateOnly(cursor);
+        const nutrition = logsByDate.get(date) || {
+          caloriesIn: 0,
+          caloriesOut: 0,
+          protein: 0,
+          carbs: 0,
+          fats: 0,
+          foodCount: 0,
+          exerciseCount: 0,
+        };
+        const dailyHabitLogs = habitLogsByDate.get(date) || [];
+        const doneCount = dailyHabitLogs.filter((log) => log.status === "done").length;
+        const totalCount = habits.length;
+        totalCaloriesIn += nutrition.caloriesIn;
+        totalCaloriesOut += nutrition.caloriesOut;
+        totalCompletedHabits += doneCount;
+        totalHabitSlots += totalCount;
+        dailyNutrition.push({
+          date,
+          calories_in: Number(nutrition.caloriesIn.toFixed(1)),
+          calories_out: Number(nutrition.caloriesOut.toFixed(1)),
+          net_calories: Number((nutrition.caloriesIn - nutrition.caloriesOut).toFixed(1)),
+          protein_g: Number(nutrition.protein.toFixed(1)),
+          carbs_g: Number(nutrition.carbs.toFixed(1)),
+          fats_g: Number(nutrition.fats.toFixed(1)),
+          food_count: nutrition.foodCount,
+          exercise_count: nutrition.exerciseCount,
+        });
+        dailyDiscipline.push({
+          date,
+          completed: doneCount,
+          total: totalCount,
+          completion_rate: totalCount ? Number((doneCount / totalCount).toFixed(3)) : 0,
+        });
+      }
+
+      const maxStreaks = habits.map((habit) => ({
+        habit_id: habit.id,
+        name: habit.name,
+        max_streak: computeMaxStreak(db.listHabitLogsForHabitAll(USER_ID, habit.id)),
+      }));
+      const avgCompletionRate = totalHabitSlots ? Number((totalCompletedHabits / totalHabitSlots).toFixed(3)) : 0;
+      const avgCaloriesIn = Number((totalCaloriesIn / 7).toFixed(1));
+      const avgCaloriesOut = Number((totalCaloriesOut / 7).toFixed(1));
+      const avgNetCalories = Number((avgCaloriesIn - avgCaloriesOut).toFixed(1));
+      const lowestDays = [...dailyDiscipline]
+        .sort((a, b) => Number(a.completion_rate) - Number(b.completion_rate))
+        .slice(0, 2)
+        .map((item) => `${item.date}（完成率 ${Math.round(Number(item.completion_rate) * 100)}%）`);
+      const metrics: WeeklyHealthReportResult["metrics"] = {
+        avg_calories_in: avgCaloriesIn,
+        avg_calories_out: avgCaloriesOut,
+        avg_net_calories: avgNetCalories,
+        avg_habit_completion_rate: avgCompletionRate,
+        total_completed_habits: totalCompletedHabits,
+        total_habits: totalHabitSlots,
+        max_streaks: maxStreaks,
+      };
+      const { prompt, systemInstruction } = buildWeeklyHealthReportPrompt({
+        weekRange,
+        profile: {
+          goal: profile.goal,
+          goalCalories: profile.goalCalories,
+          sex: profile.sex,
+          age: profile.age,
+          heightCm: profile.heightCm,
+          weightKg: profile.weightKg,
+        },
+        dailyNutrition,
+        dailyDiscipline,
+        maxStreaks,
+        weeklyMetrics: metrics,
+      });
+
+      try {
+        const raw = await callProvider({
+          provider: taskProfile.textProvider,
+          model: taskProfile.textModel,
+          prompt,
+          systemInstruction,
+        });
+        const parsed = parseJson<WeeklyHealthReportResult>(raw);
+        res.json(normalizeWeeklyHealthReport(parsed, weekRange, metrics));
+      } catch (error) {
+        res.json(
+          normalizeWeeklyHealthReport(
+            {
+              status_tag: buildWeeklyStatusTag(avgCompletionRate, avgNetCalories),
+              summary: "系统已基于一周饮食、自律和行为记录生成保底周报，用于帮助你复盘本周并调整下周目标。",
+              sections: {
+                overview:
+                  "本周的核心问题通常不在于某一天单独失控，而在于饮食和自律波动是否具有重复性。只要能识别出波动最大的时段和最容易中断的目标，下周就有机会明显提高稳定性。",
+                diet_trend:
+                  "从本周的摄入和宏量营养素波动看，更值得关注的是结构是否稳定，而不是单日是否绝对完美。如果高能量餐次频繁集中在固定日期或晚间，就应优先改那个场景，而不是一味压低总热量。",
+                discipline_trend:
+                  `本周平均完成率约为 ${Math.round(avgCompletionRate * 100)}%。真正影响下周状态的，不只是总完成率，而是哪些习惯最容易中断，以及中断后是否能快速恢复。`,
+                high_risk_window:
+                  lowestDays.length > 0
+                    ? `本周最值得警惕的低完成窗口主要集中在 ${lowestDays.join("、")}。这些日期通常代表情境性压力、疲劳或日程打乱，是下周最需要提前布防的高危时段。`
+                    : "当前数据不足以锁定明确高危窗口，但建议优先观察工作日后半段和晚间是否更容易断更。",
+                forecast:
+                  "如果下周继续沿用当前节奏而不做阈值调整，最可能出现的是中段完成率回落、饮食结构松动和连胜被打断。相反，如果你能先降低高难度目标，再保住记录完整度，下周整体稳定性会更高。",
+                next_week_actions: [
+                  "把最容易断更的目标门槛先降低，优先保证连续完成。",
+                  "提前为高危时段准备替代动作，例如低门槛运动或简化版打卡。",
+                  "下周优先控制最容易失衡的一餐，而不是试图同时修正所有餐次。",
+                  "把一项最关键习惯固定到每天同一时段，减少随机执行成本。",
+                ],
+              },
+            },
+            weekRange,
+            metrics
+          )
+        );
+      }
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to build weekly analytics" });
+    }
   });
 
   app.get("/api/logs/:date", (req, res) => {
