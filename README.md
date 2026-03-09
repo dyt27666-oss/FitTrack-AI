@@ -1,110 +1,109 @@
-﻿# FitTrack-AI
+# FitTrack-AI
 
-FitTrack-AI 是一个基于 `React + Express + SQLite` 的营养记录与行为管理系统。项目围绕“记录、识别、分析、反馈”构建闭环，覆盖饮食录入、运动日志、身体档案、轻断食、自律追踪与双轨 AI 分析。
+FitTrack-AI is a `React + Express + SQLite` health tracking system built around a closed feedback loop: log, recognize, analyze, and adjust. It combines nutrition logging, exercise records, body metrics, intermittent fasting, self-discipline tracking, and dual-engine AI analysis in a single product.
 
-## Product Preview
+## Screenshots
 
-### Dashboard
+Product screenshots are stored under:
 
-![Dashboard](./docs/screenshots/dashboard.png)
+- `docs/screenshots/`
 
-### Daily Health Insight
+This folder contains the latest captured views for the major product modules, including dashboard, logs, fasting, body metrics, self-discipline, and analytics reports.
 
-![Daily Health Insight](./docs/screenshots/analytics-daily.png)
+## Technical Highlights
 
-### Weekly Health Report
+1. Dual-engine AI architecture
+   - A vision engine handles image understanding and food description.
+   - A reasoning engine handles structured JSON, nutrition estimation, balanced diet analysis, and report generation.
+   - The pipeline uses a two-step flow: image description first, structured reasoning second. This reduces failure rates when multimodal models are forced to output complex JSON directly.
 
-![Weekly Health Report](./docs/screenshots/analytics-weekly.png)
+2. Independent route boundaries
+   - The self-discipline module is no longer only a tab-state view.
+   - It is mounted as an independent hash route at `#/discipline`, so refreshes keep the user on the target page.
+   - This keeps the current stack lightweight while preserving a clean migration path to `react-router-dom`.
 
-### Self Discipline
+3. Fault-tolerant streak algorithm
+   - `GET /api/habits/today` returns `current_streak` for each habit.
+   - The rule is:
+     - if today is done, count backward from today
+     - if today is not done but yesterday is done, count backward from yesterday
+     - otherwise the streak is `0`
+   - Historical APIs also return `max_streak`, which preserves the best historical streak even after a habit is archived.
 
-![Self Discipline](./docs/screenshots/discipline.png)
+4. Strong data boundaries
+   - Archived habits do not appear in today’s active task list.
+   - Archived habit history still contributes to heatmaps and streak statistics, so prior effort is never erased.
 
-### Fasting Tracker
+5. Food-specific unit conversion
+   - Every custom unit is bound to a specific `food_id`.
+   - Calculations strictly follow:
+     - `amount * grams_per_unit`
+     - `totalWeight`
+     - `per_100g` nutrition conversion
 
-![Fasting Tracker](./docs/screenshots/fasting.png)
+## Core Capabilities
 
-### Body Metrics
+### 1. Food and exercise logging
 
-![Body Metrics](./docs/screenshots/body-metrics.png)
+- Daily food and exercise logging
+- Food-specific unit conversion
+- Photo-based calorie and macro prefill
 
-## 技术亮点
+### 2. AI nutrition analysis
 
-1. 双轨 AI 架构
-   - 视觉链路负责图片理解与食物描述。
-   - 推理链路负责结构化 JSON、营养估算、膳食平衡建议和文本报告。
-   - 通过“看图描述 -> 结构化推理”的两步流水线，降低多模态模型直接输出复杂 JSON 时的失败率。
+- Structured outputs such as `health_score`, `alert_level`, and `analysis_report`
+- Frontend presentation through `NutritionInsightCard`
+- Mobile-first report-style rendering for food photo analysis
 
-2. 独立路由架构
-   - 自律模块已从单纯的 tab 状态切换中剥离。
-   - 当前采用 `hash route` 形式独立挂载 `#/discipline`，刷新页面后仍能保持在目标页。
-   - 这种做法不引入额外路由依赖，但已经具备独立页面的行为边界，便于后续迁移到 `react-router-dom`。
+### 3. Body metrics and intermittent fasting
 
-3. 自律容错连胜算法
-   - `GET /api/habits/today` 会返回每个习惯的 `current_streak`。
-   - 算法定义为：今天已完成则从今天回溯；今天未完成但昨天已完成，则从昨天回溯；否则连胜为 0。
-   - 历史接口还会返回 `max_streak`，即该习惯全量历史中的最长连胜记录。
+- Body measurement timeline with photos
+- Side-by-side body comparison
+- Fasting phase, status, and progress ring
 
-4. 数据边界清晰
-   - 已归档习惯不会出现在“今日任务”。
-   - 已归档习惯的历史日志仍参与热力图与最长连胜统计，避免用户历史努力被抹除。
+### 4. Self-discipline module
 
-5. 食物专属单位换算
-   - 每个单位必须绑定 `food_id`。
-   - 计算严格遵循 `amount * grams_per_unit -> totalWeight -> per_100g` 的链式公式。
+- Today task list
+- Heatmap visualization
+- 30-day habit trend curve
+- Current streak and max streak tracking
 
-## 核心能力
+### 5. Daily and weekly health analytics
 
-1. 饮食与运动记录
-   - 支持按日期记录饮食和运动日志
-   - 支持食物专属单位换算
-   - 支持图片识别后的热量与三大营养素预填
+- `Daily Health Insight`
+- `Weekly Health Report`
+- Aggregated analysis across food logs, exercise records, and discipline signals
 
-2. 膳食平衡建议
-   - 输出 `health_score`、`alert_level`、`analysis_report`
-   - 前端以 `NutritionInsightCard` 展示营养建议和 P/C/F 比例
+## Project Structure
 
-3. 身体档案与轻断食
-   - 身体围度与照片时间轴
-   - 双栏照片对比视图
-   - 轻断食状态、阶段与进度环
-
-4. 自律模块
-   - 今日任务列表
-   - 自律热力图
-   - 单项习惯 30 天趋势曲线
-   - 当前连胜与最长连胜统计
-
-## 项目结构
-
-### 前端
+### Frontend
 
 - `src/App.tsx`
-  - 主入口，负责数据加载、首页聚合视图、独立路由切换
+  - Main entry, route switching, dashboard aggregation, and product orchestration
 - `src/components/`
-  - 复用组件，如 `LogForm`、`NutritionInsightCard`、`HabitHeatmap`、`HabitTrendCurve`
+  - Reusable UI such as `LogForm`, `NutritionInsightCard`, `HabitHeatmap`, and `HabitTrendCurve`
 - `src/pages/`
-  - 页面级组件，如 `SelfDisciplinePage`
+  - Page-level views such as `SelfDisciplinePage` and `HealthReportPage`
 
-### 后端
+### Backend
 
 - `server.ts`
-  - Express 路由入口
-  - 负责 REST API、AI 调用编排、健康检查、静态资源服务
+  - Express entry point
+  - REST APIs, AI orchestration, health checks, static assets, and analytics endpoints
 - `src/server/db.ts`
-  - SQLite schema 初始化与数据访问层
+  - SQLite schema bootstrap and data access layer
 - `src/server/aiService.ts`
-  - AI 提示词、模型归一化、结构化解析与错误归类
+  - Prompt templates, model normalization, structured parsing, and fallback handling
 - `src/server/bodyMetricsService.ts`
-  - 身体档案图片落盘与 CRUD 封装
+  - Local image persistence and body-metrics CRUD
 - `src/server/fastingService.ts`
-  - 轻断食状态计算与业务逻辑
+  - Fasting state calculation and workflow logic
 
-## 数据库设计
+## Database Design
 
-SQLite 启用 `WAL` 模式，适配 Windows 环境下的并发读写。
+SQLite runs in `WAL` mode to support safer concurrent access on Windows.
 
-主要表：
+Primary tables:
 
 1. `users`
 2. `foods`
@@ -115,23 +114,23 @@ SQLite 启用 `WAL` 模式，适配 Windows 环境下的并发读写。
 7. `habits`
 8. `habit_logs`
 
-其中：
+Key rules:
 
-- `food_units` 的单位必须绑定具体 `food_id`
-- `habit_logs` 通过 `UNIQUE(habit_id, date)` 保证每日习惯状态唯一
+- `food_units` must always belong to a specific `food_id`
+- `habit_logs` use `UNIQUE(habit_id, date)` to guarantee a single daily state per habit
 
-## 环境变量
+## Environment Variables
 
-项目运行时配置以服务端环境变量为主，前端不直接持有密钥。
+Runtime configuration is server-side. The frontend does not hold provider secrets.
 
-### 基础变量
+### Base variables
 
 ```env
 PORT=3000
 NODE_ENV=development
 ```
 
-### 引擎配置
+### Engine configuration
 
 ```env
 GEMINI_API_KEY=
@@ -153,45 +152,47 @@ SILRA_TEXT_MODEL=
 SILRA_VISION_MODEL=
 ```
 
-说明：
+Notes:
 
-1. 文本模型与视觉模型是分开配置的。
-2. `Silra` 作为兼容网关时，视觉模型必须选择真正支持图片输入的模型，例如 `qwen-vl-plus`、`glm-4.5v` 或 `gemini-3.1-pro-preview`。
-3. 不要把 `deepseek-v3`、`deepseek-chat` 这类纯文本模型写入视觉链路。
+1. Text and vision models are configured separately.
+2. When using `Silra` as a compatibility gateway, the vision model must be a true image-capable model such as `qwen-vl-plus`, `glm-4.5v`, or `gemini-3.1-pro-preview`.
+3. Pure text models such as `deepseek-v3` or `deepseek-chat` must not be assigned to the vision chain.
 
-## 开发启动
+## Development
 
-### 1. 安装依赖
+### 1. Install dependencies
 
 ```bash
 npm install
 ```
 
-### 2. 配置环境变量
+### 2. Configure environment variables
 
-复制 `.env.example` 到 `.env`，填写实际的服务商密钥与模型配置。
+Copy `.env.example` to `.env` and fill in the actual provider keys and model settings.
 
-### 3. 启动开发环境
+### 3. Start the development server
 
 ```bash
 npm run dev
 ```
 
-默认情况下：
+By default:
 
-- 前端页面由 Vite 提供
-- API 由 Express 提供
-- SQLite 数据库位于 `db/fittrack.db`
+- Vite serves the frontend
+- Express serves the API
+- SQLite is stored at `db/fittrack.db`
 
-## 关键 API
+## Key APIs
 
 ### AI
 
 - `POST /api/ai/generate`
 - `GET /api/health`
 - `GET /api/ai/health-check`
+- `GET /api/analytics/daily`
+- `GET /api/analytics/weekly`
 
-### 食物与日志
+### Foods and logs
 
 - `GET /api/foods/search`
 - `POST /api/foods`
@@ -199,19 +200,19 @@ npm run dev
 - `POST /api/logs/:type`
 - `PUT /api/logs/:id`
 
-### 身体档案
+### Body metrics
 
 - `GET /api/body-metrics`
 - `POST /api/body-metrics`
 - `DELETE /api/body-metrics/:id`
 
-### 轻断食
+### Fasting
 
 - `GET /api/fasting/current`
 - `POST /api/fasting/start`
 - `POST /api/fasting/end`
 
-### 自律模块
+### Discipline
 
 - `GET /api/habits`
 - `POST /api/habits`
@@ -222,62 +223,65 @@ npm run dev
 - `GET /api/habits/heatmap`
 - `GET /api/habits/:id/history`
 
-## 自律模块说明
+## Discipline Module Notes
 
-### 今日任务列表
+### Today list
 
-`GET /api/habits/today` 返回：
+`GET /api/habits/today` returns:
 
-- 当日日期
-- 已完成数
-- 总目标数
-- 每个习惯的状态
+- current date
+- completed count
+- total count
+- per-habit status
 - `current_streak`
 
-### 热力图
+### Heatmap
 
-`GET /api/habits/heatmap?days=90` 返回按日聚合后的：
+`GET /api/habits/heatmap?days=90` returns daily aggregated:
 
 - `completed`
 - `total`
 - `rate`
 - `level (0-4)`
 
-颜色越深，表示当日完成率越高。
+Darker cells indicate stronger completion rates.
 
-### 单项趋势图
+### Individual trend
 
-`GET /api/habits/:id/history?days=30` 返回：
+`GET /api/habits/:id/history?days=30` returns:
 
-- 连续补全后的 30 天状态数组
+- a continuous 30-day status series
 - `max_streak`
 
-缺失日期会由后端自动补成 `pending`，保证前端折线图横轴连续。
+Missing dates are backfilled as `pending` by the backend so the frontend trend line remains continuous.
 
-## 验证
+## Verification
 
-### 类型检查
+### Type check
 
 ```bash
 npm run lint
 ```
 
-当前 `lint` 实际执行：
+Current lint command:
 
 ```bash
 tsc --noEmit
 ```
 
-### 建议回归点
+### Suggested regression checks
 
-1. 保存文本/视觉模型配置后执行一次 `GET /api/health`
-2. 上传食物图片，确认图片识别、结构化结果、膳食建议卡片都能回填
-3. 在自律页完成一条习惯，确认：
-   - 今日完成数刷新
-   - `current_streak` 更新
-   - 卡片动画触发
-   - 热力图与趋势图状态一致
+1. Save text and vision model settings, then run `GET /api/health`
+2. Upload a food image and verify:
+   - image recognition succeeds
+   - structured nutrition output is returned
+   - the AI nutrition analysis card renders correctly
+3. Complete a habit in the discipline page and verify:
+   - completed count updates
+   - `current_streak` updates
+   - the completion animation triggers
+   - heatmap and trend history remain consistent
 
 ## License
 
-在你自己的项目环境中使用前，请确认所接入模型服务、图片数据和第三方依赖的许可与合规要求。
+Before using this project in your own environment, verify the licensing and compliance requirements of the connected model providers, image data, and third-party dependencies.
