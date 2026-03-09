@@ -2,6 +2,32 @@
 
 FitTrack-AI 是一个基于 `React + Express + SQLite` 的营养记录与行为管理系统。项目围绕“记录、识别、分析、反馈”构建闭环，覆盖饮食录入、运动日志、身体档案、轻断食、自律追踪与双轨 AI 分析。
 
+## Product Preview
+
+### Dashboard
+
+![Dashboard](./docs/screenshots/dashboard.png)
+
+### Daily Health Insight
+
+![Daily Health Insight](./docs/screenshots/analytics-daily.png)
+
+### Weekly Health Report
+
+![Weekly Health Report](./docs/screenshots/analytics-weekly.png)
+
+### Self Discipline
+
+![Self Discipline](./docs/screenshots/discipline.png)
+
+### Fasting Tracker
+
+![Fasting Tracker](./docs/screenshots/fasting.png)
+
+### Body Metrics
+
+![Body Metrics](./docs/screenshots/body-metrics.png)
+
 ## 技术亮点
 
 1. 双轨 AI 架构
