@@ -16,6 +16,14 @@ export interface FoodExtractionResult {
   grams_per_unit: number;
 }
 
+export interface FoodUnitSuggestionResult {
+  unit_name: string;
+  grams_per_unit: number;
+  calories_per_unit: number;
+  confidence: number;
+  explanation?: string;
+}
+
 export interface ImageRecognitionCandidate {
   name: string;
   confidence: number;
@@ -284,6 +292,16 @@ export const buildFoodExtractionPrompt = (
   prompt: `Estimate nutrition for "${foodName}" per 100g. Infer calories, protein, carbs, fats, and one common serving unit with grams_per_unit.`,
   systemInstruction:
     "You are a nutrition database assistant. Return valid JSON only. Required fields: name, calories_per_100g, protein_per_100g, carbs_per_100g, fats_per_100g, cooking_method, is_edible, confidence, default_unit_name, grams_per_unit. All nutrition fields must be numeric and must never be omitted.",
+});
+
+export const buildFoodUnitSuggestionPrompt = (
+  foodName: string,
+  unitName: string,
+  caloriesPer100g: number
+): { prompt: string; systemInstruction: string } => ({
+  prompt: `请为食物“${foodName}”估算单位“${unitName}”对应的克数和热量。已知该食物每100g约 ${caloriesPer100g} kcal。`,
+  systemInstruction:
+    "你是一名营养数据库助手。只输出严格 JSON，字段必须包含：unit_name, grams_per_unit, calories_per_unit, confidence, explanation。grams_per_unit 和 calories_per_unit 必须为正数；calories_per_unit 应与已知每100g热量大体一致。若单位存在不确定性，也必须给出保守估算，不要拒答。",
 });
 
 export const buildVisionDescriptionPrompt = (): { prompt: string; systemInstruction: string } => ({

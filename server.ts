@@ -11,11 +11,13 @@ import {
   type AIProvider,
   type DailyHealthInsightResult,
   type FoodExtractionResult,
+  type FoodUnitSuggestionResult,
   type ImageRecognitionResult,
   type TaskModelProfile,
   type WeeklyHealthReportResult,
   buildDailyHolisticInsightPrompt,
   buildFoodExtractionPrompt,
+  buildFoodUnitSuggestionPrompt,
   buildImageStructuringPrompt,
   buildVisionDescriptionPrompt,
   buildWeeklyHealthReportPrompt,
@@ -510,11 +512,86 @@ const computeLogNutrition = (body: any, type: "food" | "exercise") => {
   return { calories, protein, carbs, fats, grams, foodId, unitName, amount };
 };
 
-const commitVoiceCandidate = (candidate: VoiceExtractCandidate) => {
+const ensureVoiceFoodUnit = async (
+  candidate: VoiceExtractCandidate,
+  taskProfile: TaskModelProfile
+): Promise<{ unitName: string; gramsPerUnit: number; caloriesPerUnit: number } | null> => {
+  if (candidate.type !== "food" || !candidate.food_id || !candidate.unit || candidate.unit === "g") {
+    return candidate.unit === "g"
+      ? { unitName: "g", gramsPerUnit: 1, caloriesPerUnit: Number(candidate.calories || 0) }
+      : null;
+  }
+
+  const existing = db.getFoodUnitByName(candidate.food_id, candidate.unit);
+  if (existing) {
+    const food = db.getFoodById(candidate.food_id);
+    return {
+      unitName: existing.unitName,
+      gramsPerUnit: existing.gramsPerUnit,
+      caloriesPerUnit: food ? Number(((food.caloriesPer100g * existing.gramsPerUnit) / 100).toFixed(1)) : Number(candidate.calories || 0),
+    };
+  }
+
+  const food = db.getFoodById(candidate.food_id);
+  if (!food) return null;
+
+  try {
+    const { prompt, systemInstruction } = buildFoodUnitSuggestionPrompt(food.name, candidate.unit, food.caloriesPer100g);
+    const raw = await callProvider({
+      provider: taskProfile.textProvider,
+      model: taskProfile.textModel,
+      prompt,
+      systemInstruction,
+    });
+    const parsed = parseJson<FoodUnitSuggestionResult>(raw);
+    const unitName = (parsed.unit_name || candidate.unit || "").trim();
+    const gramsPerUnit = Number(parsed.grams_per_unit || 0);
+    const caloriesPerUnit = Number(parsed.calories_per_unit || 0);
+
+    if (!unitName || !Number.isFinite(gramsPerUnit) || gramsPerUnit <= 0) {
+      throw new AIProxyError("business_parse_error", "invalid food unit suggestion");
+    }
+
+    const savedUnit = db.upsertFoodUnit({
+      foodId: candidate.food_id,
+      unitName,
+      gramsPerUnit,
+      isDefault: false,
+      source: "ai",
+      confidence: Number(parsed.confidence || candidate.confidence || 70),
+    });
+
+    console.log(
+      `[VoiceCommit] created_unit foodId=${candidate.food_id} food=${food.name} unit=${savedUnit.unitName} grams=${savedUnit.gramsPerUnit} caloriesPerUnit=${
+        Number.isFinite(caloriesPerUnit) && caloriesPerUnit > 0
+          ? caloriesPerUnit
+          : Number(((food.caloriesPer100g * savedUnit.gramsPerUnit) / 100).toFixed(1))
+      }`
+    );
+
+    return {
+      unitName: savedUnit.unitName,
+      gramsPerUnit: savedUnit.gramsPerUnit,
+      caloriesPerUnit:
+        Number.isFinite(caloriesPerUnit) && caloriesPerUnit > 0
+          ? caloriesPerUnit
+          : Number(((food.caloriesPer100g * savedUnit.gramsPerUnit) / 100).toFixed(1)),
+    };
+  } catch (error) {
+    console.error(
+      `[VoiceCommit][unit-fallback] foodId=${candidate.food_id} unit=${candidate.unit} error=${
+        error instanceof Error ? error.message : "unknown"
+      }`
+    );
+    return null;
+  }
+};
+
+const commitVoiceCandidate = async (candidate: VoiceExtractCandidate, taskProfile: TaskModelProfile) => {
   const parsedAt = candidate.parsed_time || new Date().toISOString();
   const date = parsedAt.slice(0, 10);
   const type = candidate.type === "exercise" ? "exercise" : "food";
-  const body = {
+  const body: any = {
     date,
     name: candidate.name,
     amount: Number(candidate.amount || 0),
@@ -525,6 +602,18 @@ const commitVoiceCandidate = (candidate: VoiceExtractCandidate) => {
     food_id: candidate.food_id || null,
     unit_name: type === "food" ? candidate.unit || null : candidate.unit || "分钟",
   };
+
+  if (type === "food" && body.food_id && body.unit_name && body.unit_name !== "g") {
+    const ensuredUnit = await ensureVoiceFoodUnit(candidate, taskProfile);
+    if (ensuredUnit) {
+      body.unit_name = ensuredUnit.unitName;
+    } else {
+      body.food_id = null;
+      body.unit_name = null;
+      body.grams = null;
+    }
+  }
+
   const { calories, protein, carbs, fats, grams, foodId, unitName, amount } = computeLogNutrition(body, type);
   const id = db.addLog({
     userId: USER_ID,
@@ -1282,7 +1371,9 @@ async function startServer() {
       if (!candidates.length) {
         throw new AIProxyError("business_parse_error", "candidates are required");
       }
-      const logs = candidates.map(commitVoiceCandidate).filter(Boolean);
+      const profile = db.getProfile(USER_ID);
+      const taskProfile = resolveTaskModelProfile(profile);
+      const logs = (await Promise.all(candidates.map((candidate) => commitVoiceCandidate(candidate, taskProfile)))).filter(Boolean);
       res.json({ insertedCount: logs.length, logs });
     } catch (error) {
       const pe = toProxyError(error);
