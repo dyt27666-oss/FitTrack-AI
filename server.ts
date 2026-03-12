@@ -13,13 +13,10 @@ import {
   type FoodExtractionResult,
   type ImageRecognitionResult,
   type TaskModelProfile,
-  type VoiceExtractResult,
   type WeeklyHealthReportResult,
   buildDailyHolisticInsightPrompt,
   buildFoodExtractionPrompt,
   buildImageStructuringPrompt,
-  buildVoiceExtractionPrompt,
-  buildVoiceTranscriptionPrompt,
   buildVisionDescriptionPrompt,
   buildWeeklyHealthReportPrompt,
   callProvider,
@@ -29,7 +26,6 @@ import {
 import { calculateNutritionFromWeight } from "./src/utils/nutritionCalculator";
 import { createBodyMetric, deleteBodyMetric, listBodyMetrics } from "./src/server/bodyMetricsService";
 import { endFasting, getCurrentFastingStatus, startFasting } from "./src/server/fastingService";
-import { normalizeVoiceExtractCandidates, resolveVoiceParsedTime } from "./src/server/voiceService";
 
 dotenv.config();
 
@@ -78,33 +74,6 @@ interface DualHealthResponse {
   ok: boolean;
   text: EngineHealthStatus;
   vision: EngineHealthStatus;
-}
-
-interface VoiceTranscribeRequest {
-  audioBase64?: string;
-  mimeType?: string;
-}
-
-interface VoiceExtractRequest {
-  transcript?: string;
-  date?: string;
-}
-
-interface VoiceCommitRequest {
-  date?: string;
-  candidates?: Array<{
-    id?: string;
-    type?: "food" | "exercise";
-    name?: string;
-    amount?: number;
-    unit?: string | null;
-    calories?: number;
-    protein?: number;
-    carbs?: number;
-    fats?: number;
-    parsed_time?: string;
-    confidence?: number;
-  }>;
 }
 
 const toProxyError = (error: unknown): AIGenerateErrorResponse => {
@@ -252,71 +221,6 @@ const computeMaxStreak = (logs: Array<{ date: string; status: "pending" | "done"
   }
 
   return maxStreak;
-};
-
-const resolveVoiceAsrProfile = (taskProfile: TaskModelProfile) => {
-  const envProvider = process.env.VOICE_ASR_PROVIDER as AIProvider | undefined;
-  const provider =
-    envProvider ||
-    (process.env.SILRA_API_KEY
-      ? "silra"
-      : process.env.GEMINI_API_KEY
-        ? "gemini"
-        : taskProfile.textProvider);
-
-  const model =
-    process.env.VOICE_ASR_MODEL ||
-    (provider === "silra"
-        ? "qwen3-asr-flash"
-        : provider === "gemini"
-          ? "gemini-2.5-flash"
-          : "glm-4v");
-
-  return { provider, model };
-};
-
-const ensureAudioPayload = (body: VoiceTranscribeRequest) => {
-  if (!body.audioBase64) {
-    throw new AIProxyError("business_parse_error", "audioBase64 is required");
-  }
-  const mimeType =
-    typeof body.mimeType === "string" && body.mimeType.trim() ? body.mimeType : "audio/webm";
-  const audioBase64 = body.audioBase64.startsWith("data:")
-    ? body.audioBase64.split(",")[1] || ""
-    : body.audioBase64;
-
-  if (!audioBase64) {
-    throw new AIProxyError("business_parse_error", "Invalid audio payload");
-  }
-
-  return { audioBase64, mimeType };
-};
-
-const insertVoiceCandidateAsLog = (candidate: NonNullable<VoiceCommitRequest["candidates"]>[number], fallbackDate: string) => {
-  const type = candidate.type === "exercise" ? "exercise" : "food";
-  const parsedTime =
-    typeof candidate.parsed_time === "string" && candidate.parsed_time.trim()
-      ? candidate.parsed_time
-      : resolveVoiceParsedTime(candidate.name || "", fallbackDate);
-  const logDate = parsedTime.slice(0, 10);
-  const amount = Number(candidate.amount || 0);
-
-  const id = db.addLog({
-    userId: USER_ID,
-    date: logDate,
-    type,
-    foodId: null,
-    name: String(candidate.name || (type === "food" ? "未命名食物" : "未命名运动")),
-    amount,
-    unitName: candidate.unit ? String(candidate.unit) : null,
-    grams: null,
-    calories: Number(candidate.calories || 0),
-    protein: Number(candidate.protein || 0),
-    carbs: Number(candidate.carbs || 0),
-    fats: Number(candidate.fats || 0),
-  });
-
-  return db.getLogById(USER_ID, id);
 };
 
 const resolveHeatLevel = (rate: number): 0 | 1 | 2 | 3 | 4 => {
@@ -789,86 +693,6 @@ async function startServer() {
   app.use(express.json({ limit: "20mb" }));
   app.use(express.urlencoded({ limit: "20mb", extended: true }));
   app.use("/uploads", express.static(path.join(__dirname, "public", "uploads")));
-
-  // Reserved mobile STT entry. Web v1 currently uses browser speech recognition.
-  // Future Android / Capacitor clients can upload audio to this stable contract.
-  app.post("/api/voice/transcribe", async (req, res) => {
-    try {
-      const profile = db.getProfile(USER_ID);
-      const taskProfile = resolveTaskModelProfile(profile);
-      const { audioBase64, mimeType } = ensureAudioPayload(req.body || {});
-      const asrProfile = resolveVoiceAsrProfile(taskProfile);
-      if (asrProfile.provider === "tongyi") {
-        throw new AIProxyError(
-          "business_parse_error",
-          "Tongyi 音频转写在当前兼容模式下未启用。请改用 Silra + qwen3-asr-flash，或在 .env 中显式配置 VOICE_ASR_PROVIDER=silra。"
-        );
-      }
-      const { prompt, systemInstruction } = buildVoiceTranscriptionPrompt();
-      const transcript = await callProvider({
-        provider: asrProfile.provider,
-        model: asrProfile.model,
-        prompt,
-        systemInstruction,
-        audioBase64,
-        audioMimeType: mimeType,
-      });
-
-      res.json({
-        transcript: transcript.trim(),
-        provider: asrProfile.provider,
-        model: asrProfile.model,
-        mimeType,
-      });
-    } catch (error) {
-      const pe = toProxyError(error);
-      res.status(pe.errorType === "business_parse_error" ? 400 : 500).json({ error: pe.message });
-    }
-  });
-
-  app.post("/api/voice/extract", async (req, res) => {
-    try {
-      const body = req.body as VoiceExtractRequest;
-      const transcript = String(body?.transcript || "").trim();
-      const selectedDate = String(body?.date || toDateOnly(new Date()));
-      if (!transcript) {
-        throw new AIProxyError("business_parse_error", "transcript is required");
-      }
-
-      const profile = db.getProfile(USER_ID);
-      const taskProfile = resolveTaskModelProfile(profile);
-      const { prompt, systemInstruction } = buildVoiceExtractionPrompt(transcript, selectedDate);
-      const raw = await callProvider({
-        provider: taskProfile.textProvider,
-        model: taskProfile.textModel,
-        prompt,
-        systemInstruction,
-      });
-      const parsed = parseJson<VoiceExtractResult>(raw);
-      const items = normalizeVoiceExtractCandidates(Array.isArray(parsed.items) ? parsed.items : [], transcript, selectedDate);
-      res.json({ transcript, candidates: items });
-    } catch (error) {
-      const pe = toProxyError(error);
-      res.status(pe.errorType === "business_parse_error" ? 400 : 500).json({ error: pe.message });
-    }
-  });
-
-  app.post("/api/voice/commit", (req, res) => {
-    try {
-      const body = (req.body || {}) as VoiceCommitRequest;
-      const fallbackDate = String(body.date || toDateOnly(new Date()));
-      const candidates = Array.isArray(body.candidates) ? body.candidates : [];
-      if (!candidates.length) {
-        throw new AIProxyError("business_parse_error", "candidates are required");
-      }
-
-      const insertedLogs = candidates.map((candidate) => insertVoiceCandidateAsLog(candidate, fallbackDate)).filter(Boolean);
-      res.json({ inserted: insertedLogs.length, logs: insertedLogs });
-    } catch (error) {
-      const pe = toProxyError(error);
-      res.status(pe.errorType === "business_parse_error" ? 400 : 500).json({ error: pe.message });
-    }
-  });
 
   app.get("/api/profile", (_req, res) => {
     try {

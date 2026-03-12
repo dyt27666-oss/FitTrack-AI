@@ -8,13 +8,8 @@
   HabitHeatmapCell,
   HabitHistoryPoint,
   HabitTodayItem,
-  VoiceCommitRequest,
-  VoiceCommitResponse,
-  VoiceExtractResponse,
-  VoiceTranscriptResponse,
   WeeklyHealthReport,
 } from "../types";
-import { buildApiUrl } from "../utils/runtimeUrls";
 
 export type AIProvider = "gemini" | "zhipu" | "tongyi" | "silra";
 export type AIErrorType = "network_error" | "model_error" | "business_parse_error";
@@ -190,7 +185,7 @@ class AIServiceError extends Error {
 async function callGenerate(payload: AIGenerateRequest): Promise<AIGenerateSuccessResponse> {
   let response: Response;
   try {
-    response = await fetch(buildApiUrl("/api/ai/generate"), {
+    response = await fetch("/api/ai/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -220,7 +215,7 @@ function parseJsonWithGuard<T>(raw: string): T {
 }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(buildApiUrl(url), init);
+  const response = await fetch(url, init);
   const json = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error((json as { error?: string }).error || "Request failed");
@@ -331,7 +326,7 @@ export async function analyzeFoodImage(_profile: unknown, base64Image: string): 
 
 export async function searchFoods(query: string, useAI = true) {
   const suffix = useAI ? "&use_ai=1" : "";
-  const res = await fetch(buildApiUrl(`/api/foods/search?q=${encodeURIComponent(query)}${suffix}`));
+  const res = await fetch(`/api/foods/search?q=${encodeURIComponent(query)}${suffix}`);
   return (await res.json()) as Array<Record<string, unknown>>;
 }
 
@@ -479,30 +474,6 @@ export async function fetchHabitHistory(habitId: number, days = 30): Promise<Hab
 
 export async function fetchHabits(): Promise<Habit[]> {
   return requestJson<Habit[]>("/api/habits");
-}
-
-export async function transcribeVoiceAudio(audioBase64: string, mimeType: string): Promise<VoiceTranscriptResponse> {
-  return requestJson<VoiceTranscriptResponse>("/api/voice/transcribe", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ audioBase64, mimeType }),
-  });
-}
-
-export async function extractVoiceLogCandidates(transcript: string, date: string): Promise<VoiceExtractResponse> {
-  return requestJson<VoiceExtractResponse>("/api/voice/extract", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ transcript, date }),
-  });
-}
-
-export async function commitVoiceLogCandidates(payload: VoiceCommitRequest): Promise<VoiceCommitResponse> {
-  return requestJson<VoiceCommitResponse>("/api/voice/commit", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
 }
 
 

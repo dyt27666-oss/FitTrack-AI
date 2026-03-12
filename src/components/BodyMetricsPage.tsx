@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from "motion/react";
 import { Camera, CheckSquare, ChevronDown, Dumbbell, Plus, Ruler, Square, Trash2, Weight } from "lucide-react";
 import type { BodyMetric } from "../types";
 import { SideBySideView } from "./SideBySideView";
-import { resolveAssetUrl } from "../utils/runtimeUrls";
 
 interface BodyMetricsPageProps {
   metrics: BodyMetric[];
@@ -101,7 +100,7 @@ export function BodyMetricsPage({ metrics, isSaving, onCreate, onDelete }: BodyM
             </div>
             {latest?.photoUrl ? (
               <button type="button" onClick={() => setPreviewMetric(latest)} className="mt-4 block w-full overflow-hidden rounded-[24px]">
-                <img src={resolveAssetUrl(latest.photoUrl) || latest.photoUrl || ""} alt="latest body metric" className="h-[280px] w-full object-cover" />
+                <img src={latest.photoUrl} alt="latest body metric" className="h-[280px] w-full object-cover" />
               </button>
             ) : (
               <div className="mt-4 flex h-[280px] items-center justify-center rounded-[24px] border border-dashed border-black/10 bg-white text-sm font-bold text-black/35">
@@ -148,7 +147,7 @@ export function BodyMetricsPage({ metrics, isSaving, onCreate, onDelete }: BodyM
                       <div className="flex items-center gap-2">
                         <div className="overflow-hidden rounded-2xl bg-white">
                           {item.photoUrl ? (
-                            <img src={resolveAssetUrl(item.photoUrl) || item.photoUrl || ""} alt={item.date} className="h-16 w-16 object-cover" />
+                            <img src={item.photoUrl} alt={item.date} className="h-16 w-16 object-cover" />
                           ) : (
                             <div className="flex h-16 w-16 items-center justify-center text-black/20">
                               <Camera size={18} />
@@ -236,7 +235,7 @@ export function BodyMetricsPage({ metrics, isSaving, onCreate, onDelete }: BodyM
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setPreviewMetric(null)} className="absolute inset-0 bg-black/70 backdrop-blur-md" />
             <motion.div initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }} className="relative max-w-3xl overflow-hidden rounded-[32px] bg-white shadow-2xl">
-              <img src={resolveAssetUrl(previewMetric.photoUrl) || previewMetric.photoUrl || ""} alt={previewMetric.date} className="max-h-[80vh] w-full object-cover" />
+              <img src={previewMetric.photoUrl} alt={previewMetric.date} className="max-h-[80vh] w-full object-cover" />
             </motion.div>
           </div>
         )}

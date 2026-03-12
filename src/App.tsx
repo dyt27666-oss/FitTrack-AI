@@ -26,7 +26,6 @@ import {
   Target,
   Camera,
   ChevronDown,
-  Mic,
   MoonStar,
 } from 'lucide-react';
 import { 
@@ -52,10 +51,8 @@ import { LogForm } from './components/LogForm';
 import { FoodSearchSelect } from './components/FoodSearchSelect';
 import { FastingPage, type FastingStatusView } from './components/FastingPage';
 import { BodyMetricsPage } from './components/BodyMetricsPage';
-import { VoiceLogModal } from './components/VoiceLogModal';
 import { SelfDisciplinePage } from './pages/SelfDisciplinePage';
 import { HealthReportPage } from './pages/HealthReportPage';
-import { buildApiUrl, resolveAssetUrl } from './utils/runtimeUrls';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'logs' | 'fasting' | 'bodyMetrics' | 'profile'>('dashboard');
@@ -86,7 +83,6 @@ export default function App() {
   const [alertLevel, setAlertLevel] = useState<'green' | 'yellow' | 'red' | null>(null);
   const [isEstimating, setIsEstimating] = useState(false);
   const [isImageAnalyzing, setIsImageAnalyzing] = useState(false);
-  const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [healthStatus, setHealthStatus] = useState<AIHealthCheckSummary | null>(null);
   const [isCheckingHealth, setIsCheckingHealth] = useState(false);
   const [fastingStatus, setFastingStatus] = useState<FastingStatusView | null>(null);
@@ -188,13 +184,13 @@ export default function App() {
       setCustomUnits([]);
       return;
     }
-    const res = await fetch(buildApiUrl(`/api/units?food_id=${foodId}`));
+    const res = await fetch(`/api/units?food_id=${foodId}`);
     const data = await res.json();
     setCustomUnits(Array.isArray(data) ? data : []);
   };
 
   const fetchProfile = async () => {
-    const res = await fetch(buildApiUrl('/api/profile'));
+    const res = await fetch('/api/profile');
     const data = await res.json();
     setProfile(data);
     setEditProfile(data);
@@ -202,20 +198,20 @@ export default function App() {
 
   const fetchLogs = async () => {
     setLoading(true);
-    const res = await fetch(buildApiUrl(`/api/logs/${selectedDate}`));
+    const res = await fetch(`/api/logs/${selectedDate}`);
     const data = await res.json();
     setLogs(data);
     setLoading(false);
   };
 
   const fetchFastingStatus = async () => {
-    const res = await fetch(buildApiUrl('/api/fasting/current'));
+    const res = await fetch('/api/fasting/current');
     const data = await res.json();
     setFastingStatus(data);
   };
 
   const fetchBodyMetrics = async () => {
-    const res = await fetch(buildApiUrl('/api/body-metrics'));
+    const res = await fetch('/api/body-metrics');
     const data = await res.json();
     setBodyMetrics(Array.isArray(data) ? data : []);
   };
@@ -336,7 +332,7 @@ export default function App() {
   const handleStartFasting = async () => {
     setIsSubmittingFasting(true);
     try {
-    const res = await fetch(buildApiUrl('/api/fasting/start'), {
+      const res = await fetch('/api/fasting/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ plan_type: selectedFastingPlan }),
@@ -357,7 +353,7 @@ export default function App() {
   const handleEndFasting = async () => {
     setIsSubmittingFasting(true);
     try {
-    const res = await fetch(buildApiUrl('/api/fasting/end'), {
+      const res = await fetch('/api/fasting/end', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -384,7 +380,7 @@ export default function App() {
   }) => {
     setIsSavingBodyMetric(true);
     try {
-    const res = await fetch(buildApiUrl('/api/body-metrics'), {
+      const res = await fetch('/api/body-metrics', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -405,7 +401,7 @@ export default function App() {
   const handleDeleteBodyMetric = async (id: number) => {
     setIsDeletingBodyMetric(true);
     try {
-    const res = await fetch(buildApiUrl(`/api/body-metrics/${id}`), { method: 'DELETE' });
+      const res = await fetch(`/api/body-metrics/${id}`, { method: 'DELETE' });
       const data = await res.json();
       if (res.ok) {
         await fetchBodyMetrics();
@@ -420,7 +416,7 @@ export default function App() {
   };
 
   const fetchFoodById = async (foodId: number): Promise<Food | null> => {
-    const res = await fetch(buildApiUrl(`/api/foods/${foodId}`));
+    const res = await fetch(`/api/foods/${foodId}`);
     if (!res.ok) return null;
     return (await res.json()) as Food;
   };
@@ -483,7 +479,7 @@ export default function App() {
         if (log.unit_name === 'g') {
           setSelectedUnit('g');
         } else {
-    const units = await fetch(buildApiUrl(`/api/units?food_id=${log.food_id}`)).then((res) => res.json()) as CustomUnit[];
+          const units = await fetch(`/api/units?food_id=${log.food_id}`).then((res) => res.json()) as CustomUnit[];
           setCustomUnits(Array.isArray(units) ? units : []);
           const matchedUnit = units.find((unit) => unit.name === log.unit_name);
           setSelectedUnit(matchedUnit ? String(matchedUnit.id) : 'g');
@@ -499,7 +495,7 @@ export default function App() {
     carbs: number;
     fats: number;
   }) => {
-    const res = await fetch(buildApiUrl('/api/foods'), {
+    const res = await fetch('/api/foods', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -539,13 +535,6 @@ export default function App() {
     setCustomUnits([]);
   };
 
-  const handleVoiceCommitted = async (inserted: number) => {
-    await fetchLogs();
-    setShowVoiceModal(false);
-    setToast({ message: `已通过语音写入 ${inserted} 条记录`, type: 'success' });
-    setTimeout(() => setToast(null), 3000);
-  };
-
   const handleAddLog = async (type: 'food' | 'exercise', manualData?: any) => {
     if (!manualData && (!itemName || !itemAmount)) return;
     
@@ -574,7 +563,7 @@ export default function App() {
       }
 
       if (dataToLog) {
-    const res = await fetch(buildApiUrl(`/api/logs/${type}`), {
+        const res = await fetch(`/api/logs/${type}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(dataToLog)
@@ -812,7 +801,7 @@ export default function App() {
       };
       const url = editingLog ? `/api/logs/${editingLog.id}` : `/api/logs/food`;
       const method = editingLog ? 'PUT' : 'POST';
-    const res = await fetch(buildApiUrl(url), {
+      const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -839,7 +828,7 @@ export default function App() {
       };
       const url = editingLog ? `/api/logs/${editingLog.id}` : `/api/logs/exercise`;
       const method = editingLog ? 'PUT' : 'POST';
-    const res = await fetch(buildApiUrl(url), {
+      const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -881,7 +870,7 @@ export default function App() {
   };
 
   const handleDeleteLog = async (id: number) => {
-    const res = await fetch(buildApiUrl(`/api/logs/${id}`), { method: 'DELETE' });
+    const res = await fetch(`/api/logs/${id}`, { method: 'DELETE' });
     if (res.ok) fetchLogs();
   };
 
@@ -889,7 +878,7 @@ export default function App() {
     e.preventDefault();
     setIsSaving(true);
     try {
-    const res = await fetch(buildApiUrl('/api/profile'), {
+      const res = await fetch('/api/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editProfile)
@@ -1199,11 +1188,11 @@ export default function App() {
                   </p>
                 </div>
                 <div className="shrink-0">
-                        {latestBodyMetric?.photoUrl ? (
-                          <div className="h-24 w-24 overflow-hidden rounded-full border-4 border-white shadow-lg">
-                            <img src={resolveAssetUrl(latestBodyMetric.photoUrl) || latestBodyMetric.photoUrl || ''} alt="latest body" className="h-full w-full object-cover" />
-                          </div>
-                        ) : (
+                  {latestBodyMetric?.photoUrl ? (
+                    <div className="h-24 w-24 overflow-hidden rounded-full border-4 border-white shadow-lg">
+                      <img src={latestBodyMetric.photoUrl} alt="latest body" className="h-full w-full object-cover" />
+                    </div>
+                  ) : (
                     <div className="flex h-24 w-24 items-center justify-center rounded-full border border-dashed border-black/10 bg-white text-xs font-black text-black/30">
                       无照片
                     </div>
@@ -1347,32 +1336,6 @@ export default function App() {
                 <span className="text-xs font-bold">记运动</span>
               </button>
             </div>
-
-            <button
-              type="button"
-              onClick={() => {
-                closeAddModal();
-                setShowVoiceModal(true);
-              }}
-              className="group relative w-full overflow-hidden rounded-[32px] border border-purple-200/70 bg-[linear-gradient(135deg,#f5f3ff_0%,#ede9fe_44%,#faf5ff_100%)] p-6 text-left shadow-[0_24px_54px_-30px_rgba(107,70,255,0.38)] transition-all hover:border-purple-300 hover:shadow-[0_30px_72px_-34px_rgba(107,70,255,0.48)]"
-            >
-              <div className="absolute right-5 top-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-white/70 text-purple-600 shadow-sm transition-transform group-hover:scale-110">
-                <Mic size={24} />
-              </div>
-              <div className="inline-flex rounded-full bg-white/70 px-3 py-1 text-[10px] font-black uppercase tracking-[0.22em] text-purple-700/75">
-                Voice Mode
-              </div>
-              <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-900">语音输入</h3>
-              <p className="mt-2 max-w-xl text-sm font-bold leading-6 text-slate-600">
-                说一句自然语言，系统会自动提取饮食和运动条目，确认后批量写入。
-              </p>
-              <div className="mt-5 flex flex-wrap items-center gap-3 text-sm font-black text-slate-700">
-                <span className="rounded-full bg-white/80 px-3 py-1">先转写</span>
-                <span className="rounded-full bg-white/80 px-3 py-1">再确认</span>
-                <span className="rounded-full bg-white/80 px-3 py-1">后写入</span>
-                <span className="text-xs font-bold text-purple-700/70">适合一句话补录今天的饮食和运动</span>
-              </div>
-            </button>
 
             <button
               onClick={() => setActiveTab('fasting')}
@@ -1800,7 +1763,7 @@ export default function App() {
                           <button 
                             type="button"
                             onClick={async () => {
-                        await fetch(buildApiUrl(`/api/units/${u.id}`), { method: 'DELETE' });
+                              await fetch(`/api/units/${u.id}`, { method: 'DELETE' });
                               fetchUnits(selectedFoodId || undefined);
                             }}
                             className="text-red-500 p-1 hover:bg-red-50 rounded-lg"
@@ -1978,7 +1941,7 @@ export default function App() {
                 <button 
                   onClick={async () => {
                     if (!unitTargetFood?.id || !newUnit.name || !newUnit.weight_g) return;
-                      await fetch(buildApiUrl('/api/units'), {
+                    await fetch('/api/units', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ ...newUnit, food_id: unitTargetFood.id })
@@ -2065,16 +2028,6 @@ export default function App() {
             onManualEstimateChange={setEstimatedCalories}
             onAddCustomFood={handleAddCustomFood}
             onSubmit={handleSubmitLogForm}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {showVoiceModal && (
-          <VoiceLogModal
-            selectedDate={selectedDate}
-            onClose={() => setShowVoiceModal(false)}
-            onCommitted={handleVoiceCommitted}
           />
         )}
       </AnimatePresence>
