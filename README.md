@@ -43,6 +43,13 @@ This folder contains the latest captured views for the major product modules, in
      - `totalWeight`
      - `per_100g` nutrition conversion
 
+6. Voice logging with server-side STT
+   - Users can record one natural-language sentence that mixes food and exercise events.
+   - The server transcribes audio through a configurable STT fallback chain, then extracts structured logging candidates.
+   - The UI always routes voice entries through a review step before persistence, so users can delete entries or adjust quantity and duration.
+   - If a matched food is missing a food-specific unit, the server now asks the AI to estimate `grams_per_unit` and `calories_per_unit`, stores the unit when valid, and then retries the commit.
+   - If unit creation still fails, the system degrades gracefully to a plain food log instead of failing the entire batch.
+
 ## Core Capabilities
 
 ### 1. Food and exercise logging
@@ -76,6 +83,14 @@ This folder contains the latest captured views for the major product modules, in
 - `Weekly Health Report`
 - Aggregated analysis across food logs, exercise records, and discipline signals
 
+### 6. Voice-first logging
+
+- Server-side speech-to-text for recorded audio
+- Structured extraction of mixed food and exercise statements from Chinese natural language
+- Fast-path parsing for common spoken patterns such as fruit counts, running duration, climbing, and badminton
+- Review-before-write workflow with batch commit
+- AI-assisted recovery for missing food-specific units during voice log persistence
+
 ## Project Structure
 
 ### Frontend
@@ -100,6 +115,10 @@ This folder contains the latest captured views for the major product modules, in
   - Local image persistence and body-metrics CRUD
 - `src/server/fastingService.ts`
   - Fasting state calculation and workflow logic
+- `src/server/voiceService.ts`
+  - Chinese voice transcript extraction, time phrase parsing, and fast-path spoken-language matching
+- `src/server/voiceTranscriptionService.ts`
+  - Server-side speech-to-text orchestration with provider/model fallback
 
 ## Database Design
 
@@ -164,6 +183,7 @@ Notes:
 4. Web voice input currently prefers server-side STT through `Silra`.
 5. `VOICE_ASR_MODELS` accepts a comma-separated fallback chain, for example `qwen3-asr-flash,gemini-2.5-flash`.
 6. If the current gateway rejects the audio transport, the UI surfaces a clear error instead of silently falling back to browser speech recognition.
+7. Voice transcription, transcript extraction, and final persistence are separate backend stages. STT only produces transcript text; structured logging still goes through `/api/voice/extract` and `/api/voice/commit`.
 
 ## Development
 
@@ -198,9 +218,23 @@ By default:
 - `GET /api/ai/health-check`
 - `GET /api/analytics/daily`
 - `GET /api/analytics/weekly`
+
+### Voice logging
+
 - `POST /api/voice/transcribe`
 - `POST /api/voice/extract`
 - `POST /api/voice/commit`
+
+Voice logging flow:
+
+1. `transcribe`
+   - accepts `{ audioBase64, mimeType }`
+   - returns transcript text plus the provider/model actually used
+2. `extract`
+   - converts transcript into structured mixed candidates such as food + exercise in the same sentence
+3. `commit`
+   - batch-writes reviewed candidates into the existing log system
+   - auto-recovers missing food-specific units through AI suggestion when possible
 
 ### Foods and logs
 
