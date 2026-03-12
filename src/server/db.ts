@@ -80,6 +80,7 @@ export interface CreateLogInput {
   protein?: number;
   carbs?: number;
   fats?: number;
+  timestamp?: string | null;
 }
 
 export interface UpdateLogInput extends CreateLogInput {
@@ -575,8 +576,8 @@ export class FitTrackDB {
   addLog(input: CreateLogInput): number {
     const info = this.db
       .prepare(
-        `INSERT INTO logs (user_id, date, type, food_id, name, amount, unit_name, grams, calories, protein, carbs, fats)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO logs (user_id, date, type, food_id, name, amount, unit_name, grams, calories, protein, carbs, fats, timestamp)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))`
       )
       .run(
         input.userId,
@@ -590,7 +591,8 @@ export class FitTrackDB {
         input.calories,
         input.protein || 0,
         input.carbs || 0,
-        input.fats || 0
+        input.fats || 0,
+        input.timestamp || null
       );
     return Number(info.lastInsertRowid);
   }

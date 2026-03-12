@@ -26,6 +26,8 @@ import {
 import { calculateNutritionFromWeight } from "./src/utils/nutritionCalculator";
 import { createBodyMetric, deleteBodyMetric, listBodyMetrics } from "./src/server/bodyMetricsService";
 import { endFasting, getCurrentFastingStatus, startFasting } from "./src/server/fastingService";
+import { extractVoiceCandidates, type VoiceExtractCandidate } from "./src/server/voiceService";
+import { transcribeAudio } from "./src/server/voiceTranscriptionService";
 
 dotenv.config();
 
@@ -74,6 +76,11 @@ interface DualHealthResponse {
   ok: boolean;
   text: EngineHealthStatus;
   vision: EngineHealthStatus;
+}
+
+interface VoiceTranscribeRequest {
+  audioBase64?: string;
+  mimeType?: string;
 }
 
 const toProxyError = (error: unknown): AIGenerateErrorResponse => {
@@ -501,6 +508,40 @@ const computeLogNutrition = (body: any, type: "food" | "exercise") => {
   }
 
   return { calories, protein, carbs, fats, grams, foodId, unitName, amount };
+};
+
+const commitVoiceCandidate = (candidate: VoiceExtractCandidate) => {
+  const parsedAt = candidate.parsed_time || new Date().toISOString();
+  const date = parsedAt.slice(0, 10);
+  const type = candidate.type === "exercise" ? "exercise" : "food";
+  const body = {
+    date,
+    name: candidate.name,
+    amount: Number(candidate.amount || 0),
+    calories: Number(candidate.calories || 0),
+    protein: Number(candidate.protein || 0),
+    carbs: Number(candidate.carbs || 0),
+    fats: Number(candidate.fats || 0),
+    food_id: candidate.food_id || null,
+    unit_name: type === "food" ? candidate.unit || null : candidate.unit || "分钟",
+  };
+  const { calories, protein, carbs, fats, grams, foodId, unitName, amount } = computeLogNutrition(body, type);
+  const id = db.addLog({
+    userId: USER_ID,
+    date,
+    type,
+    foodId,
+    name: body.name,
+    amount,
+    unitName,
+    grams,
+    calories,
+    protein,
+    carbs,
+    fats,
+    timestamp: parsedAt,
+  });
+  return db.getLogById(USER_ID, id);
 };
 
 const toHealthStatus = async (kind: "text" | "vision", provider: AIProvider, model: string): Promise<EngineHealthStatus> => {
@@ -1204,6 +1245,48 @@ async function startServer() {
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to delete log" });
+    }
+  });
+
+  app.post("/api/voice/transcribe", async (req, res) => {
+    try {
+      const body = (req.body || {}) as VoiceTranscribeRequest;
+      const result = await transcribeAudio({
+        audioBase64: String(body.audioBase64 || ""),
+        mimeType: String(body.mimeType || "audio/webm"),
+      });
+      res.json(result);
+    } catch (error) {
+      const pe = toProxyError(error);
+      res.status(pe.errorType === "business_parse_error" ? 400 : 502).json({ error: pe.message });
+    }
+  });
+
+  app.post("/api/voice/extract", async (req, res) => {
+    try {
+      const transcript = String(req.body?.transcript || "").trim();
+      const date = String(req.body?.date || toDateOnly(new Date()));
+      const profile = db.getProfile(USER_ID);
+      const taskProfile = resolveTaskModelProfile(profile);
+      const candidates = await extractVoiceCandidates(taskProfile.textProvider, taskProfile.textModel, transcript, date);
+      res.json({ transcript, candidates });
+    } catch (error) {
+      const pe = toProxyError(error);
+      res.status(pe.errorType === "business_parse_error" ? 400 : 502).json({ error: pe.message });
+    }
+  });
+
+  app.post("/api/voice/commit", async (req, res) => {
+    try {
+      const candidates = Array.isArray(req.body?.candidates) ? (req.body.candidates as VoiceExtractCandidate[]) : [];
+      if (!candidates.length) {
+        throw new AIProxyError("business_parse_error", "candidates are required");
+      }
+      const logs = candidates.map(commitVoiceCandidate).filter(Boolean);
+      res.json({ insertedCount: logs.length, logs });
+    } catch (error) {
+      const pe = toProxyError(error);
+      res.status(pe.errorType === "business_parse_error" ? 400 : 500).json({ error: pe.message });
     }
   });
 

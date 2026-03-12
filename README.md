@@ -152,6 +152,8 @@ SILRA_API_KEY=
 SILRA_BASE_URL=
 SILRA_TEXT_MODEL=
 SILRA_VISION_MODEL=
+VOICE_ASR_PROVIDER=
+VOICE_ASR_MODELS=
 ```
 
 Notes:
@@ -159,6 +161,9 @@ Notes:
 1. Text and vision models are configured separately.
 2. When using `Silra` as a compatibility gateway, the vision model must be a true image-capable model such as `qwen-vl-plus`, `glm-4.5v`, or `gemini-3.1-pro-preview`.
 3. Pure text models such as `deepseek-v3` or `deepseek-chat` must not be assigned to the vision chain.
+4. Web voice input currently prefers server-side STT through `Silra`.
+5. `VOICE_ASR_MODELS` accepts a comma-separated fallback chain, for example `qwen3-asr-flash,gemini-2.5-flash`.
+6. If the current gateway rejects the audio transport, the UI surfaces a clear error instead of silently falling back to browser speech recognition.
 
 ## Development
 
@@ -193,6 +198,9 @@ By default:
 - `GET /api/ai/health-check`
 - `GET /api/analytics/daily`
 - `GET /api/analytics/weekly`
+- `POST /api/voice/transcribe`
+- `POST /api/voice/extract`
+- `POST /api/voice/commit`
 
 ### Foods and logs
 

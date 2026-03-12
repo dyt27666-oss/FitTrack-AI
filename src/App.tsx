@@ -27,6 +27,7 @@ import {
   Camera,
   ChevronDown,
   MoonStar,
+  Mic,
 } from 'lucide-react';
 import { 
   PieChart, 
@@ -53,6 +54,7 @@ import { FastingPage, type FastingStatusView } from './components/FastingPage';
 import { BodyMetricsPage } from './components/BodyMetricsPage';
 import { SelfDisciplinePage } from './pages/SelfDisciplinePage';
 import { HealthReportPage } from './pages/HealthReportPage';
+import { VoiceLogModal } from './components/VoiceLogModal';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'logs' | 'fasting' | 'bodyMetrics' | 'profile'>('dashboard');
@@ -83,6 +85,7 @@ export default function App() {
   const [alertLevel, setAlertLevel] = useState<'green' | 'yellow' | 'red' | null>(null);
   const [isEstimating, setIsEstimating] = useState(false);
   const [isImageAnalyzing, setIsImageAnalyzing] = useState(false);
+  const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [healthStatus, setHealthStatus] = useState<AIHealthCheckSummary | null>(null);
   const [isCheckingHealth, setIsCheckingHealth] = useState(false);
   const [fastingStatus, setFastingStatus] = useState<FastingStatusView | null>(null);
@@ -874,6 +877,13 @@ export default function App() {
     if (res.ok) fetchLogs();
   };
 
+  const handleVoiceCommitted = async (insertedCount: number) => {
+    await fetchLogs();
+    setShowVoiceModal(false);
+    setToast({ message: `已添加 ${insertedCount} 条语音记录`, type: 'success' });
+    setTimeout(() => setToast(null), 3000);
+  };
+
   const updateProfile = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsSaving(true);
@@ -1336,6 +1346,27 @@ export default function App() {
                 <span className="text-xs font-bold">记运动</span>
               </button>
             </div>
+
+            <button
+              type="button"
+              onClick={() => setShowVoiceModal(true)}
+              className="group relative w-full overflow-hidden rounded-[32px] border border-violet-200/60 bg-[linear-gradient(135deg,#f5f3ff_0%,#ede9fe_40%,#ddd6fe_100%)] p-6 text-left shadow-[0_24px_54px_-30px_rgba(109,40,217,0.42)]"
+            >
+              <div className="absolute right-5 top-5 flex h-12 w-12 items-center justify-center rounded-2xl bg-white/80 text-violet-600 shadow-sm transition-transform group-hover:scale-110">
+                <Mic size={22} />
+              </div>
+              <p className="text-[10px] font-black uppercase tracking-[0.26em] text-violet-700/65">Voice Mode</p>
+              <h3 className="mt-2 text-2xl font-black tracking-tight text-slate-900">语音输入</h3>
+              <p className="mt-2 max-w-xl text-sm font-bold leading-6 text-slate-600">
+                说一句自然语言，系统会自动提取饮食和运动条目，确认后批量写入。
+              </p>
+              <div className="mt-5 flex flex-wrap items-center gap-3 text-xs font-black text-violet-700">
+                <span className="rounded-full bg-white/80 px-3 py-1">服务端 STT</span>
+                <span className="rounded-full bg-white/80 px-3 py-1">先转写</span>
+                <span className="rounded-full bg-white/80 px-3 py-1">再确认</span>
+                <span className="rounded-full bg-white/80 px-3 py-1">后写入</span>
+              </div>
+            </button>
 
             <button
               onClick={() => setActiveTab('fasting')}
@@ -2031,6 +2062,17 @@ export default function App() {
           />
         )}
       </AnimatePresence>
+
+      <VoiceLogModal
+        open={showVoiceModal}
+        selectedDate={selectedDate}
+        onClose={() => setShowVoiceModal(false)}
+        onCommitted={handleVoiceCommitted}
+        onToast={(message, type) => {
+          setToast({ message, type });
+          setTimeout(() => setToast(null), 3000);
+        }}
+      />
     </div>
   );
 }

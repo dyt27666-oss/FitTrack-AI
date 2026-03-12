@@ -258,6 +258,42 @@ export interface HabitHistoryPoint {
   value: number;
 }
 
+export interface VoiceTranscriptResponse {
+  transcript: string;
+  provider: string;
+  model: string;
+}
+
+export interface VoiceExtractCandidate {
+  id: string;
+  type: 'food' | 'exercise';
+  name: string;
+  amount: number;
+  unit: string | null;
+  calories: number;
+  parsed_time: string;
+  confidence?: number;
+  explanation?: string;
+  food_id?: number | null;
+  protein?: number;
+  carbs?: number;
+  fats?: number;
+}
+
+export interface VoiceExtractResponse {
+  transcript: string;
+  candidates: VoiceExtractCandidate[];
+}
+
+export interface VoiceCommitRequest {
+  candidates: VoiceExtractCandidate[];
+}
+
+export interface VoiceCommitResponse {
+  insertedCount: number;
+  logs: Log[];
+}
+
 export interface HabitHistorySeries {
   points: HabitHistoryPoint[];
   max_streak: number;

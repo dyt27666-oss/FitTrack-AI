@@ -8,6 +8,10 @@
   HabitHeatmapCell,
   HabitHistoryPoint,
   HabitTodayItem,
+  VoiceCommitRequest,
+  VoiceCommitResponse,
+  VoiceExtractResponse,
+  VoiceTranscriptResponse,
   WeeklyHealthReport,
 } from "../types";
 
@@ -475,5 +479,33 @@ export async function fetchHabitHistory(habitId: number, days = 30): Promise<Hab
 export async function fetchHabits(): Promise<Habit[]> {
   return requestJson<Habit[]>("/api/habits");
 }
+export async function transcribeVoiceAudio(payload: {
+  audioBase64: string;
+  mimeType: string;
+}): Promise<VoiceTranscriptResponse> {
+  return requestJson<VoiceTranscriptResponse>("/api/voice/transcribe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
 
+export async function extractVoiceLogCandidates(payload: {
+  transcript: string;
+  date?: string;
+}): Promise<VoiceExtractResponse> {
+  return requestJson<VoiceExtractResponse>("/api/voice/extract", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function commitVoiceLogCandidates(payload: VoiceCommitRequest): Promise<VoiceCommitResponse> {
+  return requestJson<VoiceCommitResponse>("/api/voice/commit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
 
