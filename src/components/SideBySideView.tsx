@@ -1,6 +1,7 @@
 ﻿import React from "react";
 import { AnimatePresence, motion } from "motion/react";
 import type { BodyMetric } from "../types";
+import { resolveAssetUrl } from "../utils/runtimeUrls";
 
 interface SideBySideViewProps {
   metrics: [BodyMetric, BodyMetric];
@@ -62,7 +63,7 @@ export function SideBySideView({ metrics, onClose }: SideBySideViewProps) {
                 </div>
                 <div className="bg-black">
                   {item.photoUrl ? (
-                    <img src={item.photoUrl} alt={item.date} className="h-[60vh] w-full object-cover" />
+                    <img src={resolveAssetUrl(item.photoUrl) || item.photoUrl || ""} alt={item.date} className="h-[60vh] w-full object-cover" />
                   ) : (
                     <div className="flex h-[60vh] items-center justify-center bg-[#F8F9FA] text-sm font-bold text-black/35">暂无照片</div>
                   )}

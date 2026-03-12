@@ -126,6 +126,21 @@ export interface WeeklyHealthReportResult {
   };
 }
 
+export interface VoiceExtractResult {
+  items: Array<{
+    type: "food" | "exercise";
+    name: string;
+    amount: number;
+    unit?: string | null;
+    calories: number;
+    protein?: number;
+    carbs?: number;
+    fats?: number;
+    parsed_time?: string;
+    confidence?: number;
+  }>;
+}
+
 export class AIProxyError extends Error {
   constructor(public errorType: ProxyErrorType, message: string) {
     super(message);
@@ -238,6 +253,8 @@ export const callProvider = async (input: {
   prompt: string;
   systemInstruction?: string;
   imageBase64?: string;
+  audioBase64?: string;
+  audioMimeType?: string;
 }): Promise<string> => {
   const apiKey = resolveApiKey(input.provider);
   if (!apiKey) {
@@ -260,11 +277,33 @@ export const callProvider = async (input: {
 
   try {
     const llm = LLMManager.createProvider(config);
-    return await llm.generate(input.prompt, input.systemInstruction, input.imageBase64);
+    return await llm.generate(
+      input.prompt,
+      input.systemInstruction,
+      input.imageBase64,
+      input.audioBase64,
+      input.audioMimeType
+    );
   } catch (error) {
     throw new AIProxyError(classifyProxyError(error), error instanceof Error ? error.message : "Unknown AI error");
   }
 };
+
+export const buildVoiceTranscriptionPrompt = (): { prompt: string; systemInstruction: string } => ({
+  prompt:
+    "请把这段中文语音完整转写成自然中文文本。只输出转写结果本身，不要解释，不要补充说明，不要输出 JSON。",
+  systemInstruction:
+    "你是一名中文语音转写助手。任务是把音频内容转成通顺、完整的中文句子。保留时间词、数量词、食物名称和运动项目，不要概括，不要润色。",
+});
+
+export const buildVoiceExtractionPrompt = (
+  transcript: string,
+  selectedDate: string
+): { prompt: string; systemInstruction: string } => ({
+  prompt: `请从下面这段中文语音转写文本中，提取可写入健康日志的条目。\n\n转写文本：${transcript}\n\n当前选中日期：${selectedDate}`,
+  systemInstruction:
+    '你是一名中文健康日志提取助手。请把一句自然语言中的饮食和运动动作提取成严格 JSON。只输出 JSON，不要解释。返回格式：{"items":[...] }。items 中每个对象必须包含 type(food|exercise), name, amount, unit, calories, parsed_time, confidence。食物可额外包含 protein, carbs, fats；运动也可包含 confidence。支持一段话里同时包含多条食物和运动。要识别中文数量词和时间词，例如“一个、两个、半碗、50分钟、今天上午、中午、晚上、昨天”。如果时间不明确，可省略 parsed_time，让系统回退。calories 必须为正数整数。不要输出空数组，除非确实没有任何可写入条目。',
+});
 
 export const parseJson = <T>(raw: string): T => {
   const match = raw.match(/\{[\s\S]*\}/);

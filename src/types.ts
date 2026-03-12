@@ -262,3 +262,47 @@ export interface HabitHistorySeries {
   points: HabitHistoryPoint[];
   max_streak: number;
 }
+
+export interface VoiceTranscriptResponse {
+  transcript: string;
+  provider: string;
+  model: string;
+  mimeType: string;
+}
+
+export type VoiceInputMode = 'browser' | 'server';
+
+export interface VoiceEngineAvailability {
+  browserSupported: boolean;
+  serverSupported: boolean;
+  activeMode: VoiceInputMode;
+}
+
+export interface VoiceExtractCandidate {
+  id: string;
+  type: 'food' | 'exercise';
+  name: string;
+  amount: number;
+  unit: string | null;
+  calories: number;
+  protein?: number;
+  carbs?: number;
+  fats?: number;
+  parsed_time: string;
+  confidence?: number;
+}
+
+export interface VoiceExtractResponse {
+  transcript: string;
+  candidates: VoiceExtractCandidate[];
+}
+
+export interface VoiceCommitRequest {
+  date: string;
+  candidates: VoiceExtractCandidate[];
+}
+
+export interface VoiceCommitResponse {
+  inserted: number;
+  logs: Log[];
+}

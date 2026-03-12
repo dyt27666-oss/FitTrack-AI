@@ -39,11 +39,23 @@ abstract class LLMProvider {
     }
   }
 
-  abstract generate(prompt: string, systemInstruction?: string, imageBase64?: string): Promise<string>;
+  abstract generate(
+    prompt: string,
+    systemInstruction?: string,
+    imageBase64?: string,
+    audioBase64?: string,
+    audioMimeType?: string
+  ): Promise<string>;
 }
 
 class GeminiProvider extends LLMProvider {
-  async generate(prompt: string, systemInstruction?: string, imageBase64?: string): Promise<string> {
+  async generate(
+    prompt: string,
+    systemInstruction?: string,
+    imageBase64?: string,
+    audioBase64?: string,
+    audioMimeType = "audio/webm"
+  ): Promise<string> {
     const apiKey = this.config.apiKey;
     if (!apiKey) throw new Error("Gemini API Key is missing");
 
@@ -57,6 +69,14 @@ class GeminiProvider extends LLMProvider {
 
     const imageData = this.ensureImageDataUrl(imageBase64, "image/jpeg");
     const parts: Array<Record<string, unknown>> = [{ text: prompt }];
+    if (audioBase64) {
+      parts.unshift({
+        inlineData: {
+          mimeType: audioMimeType,
+          data: audioBase64.startsWith("data:") ? audioBase64.split(",")[1] || "" : audioBase64,
+        },
+      });
+    }
     if (imageData) {
       parts.unshift({
         inlineData: {
@@ -111,7 +131,16 @@ class OpenAICompatibleProvider extends LLMProvider {
     );
   }
 
-  private resolveModel(isVision: boolean): string {
+  private resolveModel(isVision: boolean, isAudio: boolean): string {
+    if (isAudio) {
+      if (this.providerName === "silra") {
+        return process.env.VOICE_ASR_MODEL || this.config.model || "qwen3-asr-flash";
+      }
+      if (this.providerName === "zhipu") {
+        return process.env.VOICE_ASR_MODEL || this.config.model || "glm-4v";
+      }
+      return process.env.VOICE_ASR_MODEL || this.config.model || "qwen3-asr-flash";
+    }
     if (this.providerName === "silra") {
       if (isVision) {
         if (!this.isVisionCapableModel(this.config.model)) {
@@ -155,7 +184,13 @@ class OpenAICompatibleProvider extends LLMProvider {
     return "";
   }
 
-  async generate(prompt: string, systemInstruction?: string, imageBase64?: string): Promise<string> {
+  async generate(
+    prompt: string,
+    systemInstruction?: string,
+    imageBase64?: string,
+    audioBase64?: string,
+    audioMimeType = "audio/webm"
+  ): Promise<string> {
     const apiKey = this.config.apiKey;
     if (!apiKey) throw new Error(`${this.providerName} API Key is missing`);
 
@@ -170,13 +205,23 @@ class OpenAICompatibleProvider extends LLMProvider {
     );
     const endpoint = this.resolveEndpoint(baseUrl);
     const imageData = this.ensureImageDataUrl(imageBase64, "image/jpeg");
-    const model = this.resolveModel(Boolean(imageData));
+    const normalizedAudio = audioBase64?.startsWith("data:") ? audioBase64.split(",")[1] || "" : audioBase64;
+    const model = this.resolveModel(Boolean(imageData), Boolean(normalizedAudio));
 
     console.log(
       `[LLM][${this.providerName}] model=${model} baseUrl=${baseUrl} endpoint=${endpoint} key=${this.maskKey(apiKey)} timeoutMs=${LLMProvider.TIMEOUT_MS}`
     );
 
     const userContent: Array<Record<string, unknown>> = [{ type: "text", text: prompt }];
+    if (normalizedAudio) {
+      userContent.push({
+        type: "input_audio",
+        input_audio: {
+          data: normalizedAudio,
+          format: audioMimeType.replace(/^audio\//, ""),
+        },
+      });
+    }
     if (imageData) {
       userContent.push({ type: "image_url", image_url: { url: imageData } });
     }

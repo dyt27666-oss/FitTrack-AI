@@ -135,6 +135,7 @@ NODE_ENV=development
 ### Engine configuration
 
 ```env
+VITE_API_BASE_URL=
 GEMINI_API_KEY=
 GEMINI_BASE_URL=
 
@@ -159,6 +160,24 @@ Notes:
 1. Text and vision models are configured separately.
 2. When using `Silra` as a compatibility gateway, the vision model must be a true image-capable model such as `qwen-vl-plus`, `glm-4.5v`, or `gemini-3.1-pro-preview`.
 3. Pure text models such as `deepseek-v3` or `deepseek-chat` must not be assigned to the vision chain.
+
+## Deployment Readiness
+
+The project is now prepared for a future Android app packaging flow based on `Capacitor + remote backend`.
+
+Current deployment assumptions:
+
+1. Frontend requests can be redirected through `VITE_API_BASE_URL` instead of assuming same-origin `/api/*`.
+2. Uploaded resources such as body photos should be rendered through normalized absolute URLs, which is important for WebView or packaged app environments.
+3. Voice input currently uses browser speech recognition as the active Web fallback.
+4. `POST /api/voice/transcribe` is kept as a stable reserved backend contract for future Android/native audio upload, even though Web v1 does not depend on it.
+
+Recommended rollout order:
+
+1. Deploy the Express backend to a reachable HTTPS domain.
+2. Set `VITE_API_BASE_URL` to that backend origin.
+3. Verify image uploads and report pages with absolute resource URLs.
+4. Package the React frontend with Capacitor only after the remote API path is stable.
 
 ## Development
 
