@@ -12,6 +12,18 @@ export default defineConfig(({mode}) => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules')) {
+              if (id.includes('recharts')) return 'charts';
+              if (id.includes('lucide-react') || id.includes('motion')) return 'ui-vendor';
+            }
+          },
+        },
+      },
+    },
     server: {
       // Keep HMR optional so local edits remain stable in constrained environments.
       hmr: process.env.DISABLE_HMR !== 'true',

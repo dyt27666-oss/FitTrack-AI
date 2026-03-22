@@ -1,5 +1,5 @@
 {
-  "name": "react-example",
+  "name": "fittrack-ai",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -7,7 +7,7 @@
     "dev": "tsx server.ts",
     "build": "vite build",
     "preview": "vite preview",
-    "clean": "rm -rf dist",
+    "clean": "powershell -NoProfile -Command \"if (Test-Path dist) { Remove-Item -Recurse -Force dist }\"",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
